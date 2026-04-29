@@ -59,42 +59,134 @@ namespace DuplexerFinalTest.Helpers
             _connection.Open();
         }
 
-        public bool IsExistingRecord(string deviceCode, out int finalIncrement)
+        /// <summary>
+        /// Returns all DeviceCode values in MeasMain that match M{serialNo}A% ordered by DeviceCode.
+        /// e.g. for serialNo "12345678": ["M12345678A", "M12345678A1", "M12345678A2"]
+        /// </summary>
+        public string[] GetExistingDeviceCodes(string serialNo)
         {
-            finalIncrement = 0;
             try
             {
                 EnsureConnected();
-                string sql = "SELECT MAX(FinalIncrement) FROM MeasMain WHERE DeviceCode = @dc";
+                string sql = "SELECT DeviceCode FROM MeasMain WHERE DeviceCode LIKE @pattern ORDER BY DeviceCode";
                 using (var cmd = new SqlCommand(sql, _connection))
                 {
-                    cmd.Parameters.AddWithValue("@dc", deviceCode);
-                    var result = cmd.ExecuteScalar();
-                    if (result != DBNull.Value && result != null)
+                    cmd.Parameters.AddWithValue("@pattern", $"M{serialNo}A%");
+                    using (var reader = cmd.ExecuteReader())
                     {
-                        finalIncrement = Convert.ToInt32(result);
-                        return true;
+                        var list = new List<string>();
+                        while (reader.Read()) list.Add(reader.GetString(0));
+                        return list.ToArray();
                     }
-                    return false;
                 }
             }
-            catch { return false; }
+            catch { return new string[0]; }
         }
 
-        public void UpdateExistingRecord(string deviceCode, int finalIncrement)
+        /// <summary>
+        /// Saves a test result following the reference device-code-shift pattern:
+        ///   - 1st test:  saves as M{sn}A
+        ///   - 2nd test:  renames M{sn}A → M{sn}A1 in both tables, saves new as M{sn}A
+        ///   - 3rd test:  renames M{sn}A1 → M{sn}A2, M{sn}A → M{sn}A1, saves new as M{sn}A
+        ///   (latest result always has DeviceCode = M{sn}A)
+        /// All renames and inserts are wrapped in one SQL transaction.
+        /// </summary>
+        public void SaveTestResultsWithHistory(MeasMainModel measMain, List<MeasManualTestModel> manualTests)
         {
             try
             {
                 EnsureConnected();
-                string sql = "UPDATE MeasMain SET FinalIncrement = @fi WHERE DeviceCode = @dc";
-                using (var cmd = new SqlCommand(sql, _connection))
+                string baseCode = $"M{measMain.SerialNo}A";
+                string[] existing = GetExistingDeviceCodes(measMain.SerialNo);
+                Shared.logger?.Log($"DB save: SerialNo={measMain.SerialNo} | existing={existing.Length} records | DeviceCode={baseCode}");
+
+                using (var transaction = _connection.BeginTransaction())
                 {
-                    cmd.Parameters.AddWithValue("@fi", finalIncrement);
-                    cmd.Parameters.AddWithValue("@dc", deviceCode);
+                    try
+                    {
+                        // Shift existing device codes up by 1 to free up baseCode (e.g. MA)
+                        if (existing.Length == 1 && existing[0] == baseCode)
+                        {
+                            // Only "MA" exists → rename to "MA1"
+                            RenameDeviceCode(baseCode, $"{baseCode}1", transaction);
+                            Shared.logger?.Log($"DB: renamed {baseCode} → {baseCode}1");
+                        }
+                        else if (existing.Length > 1)
+                        {
+                            // e.g. ["MA", "MA1", "MA2"] → lastSuffix=2
+                            // Rename from highest down: MA2→MA3, MA1→MA2, MA→MA1
+                            int lastSuffix = int.Parse(existing[existing.Length - 1].Substring(baseCode.Length));
+                            for (int counter = lastSuffix; counter >= 0; counter--)
+                            {
+                                string from = counter == 0 ? baseCode : $"{baseCode}{counter}";
+                                string to = $"{baseCode}{counter + 1}";
+                                RenameDeviceCode(from, to, transaction);
+                                Shared.logger?.Log($"DB: renamed {from} → {to}");
+                            }
+                        }
+
+                        // INSERT MeasMain with the base device code (always MA)
+                        string sqlMain = @"INSERT INTO MeasMain
+                            (DeviceCode,SerialNo,Operator,TestDate,TestTime,TestRig,SoftwareRev,ItemNo,ItemNoRev,Passed,TestType)
+                            VALUES (@dc,@sn,@op,@td,@tt,@tr,@sr,@ino,@inr,@pass,@tt2)";
+                        using (var cmd = new SqlCommand(sqlMain, _connection, transaction))
+                        {
+                            cmd.Parameters.AddWithValue("@dc", baseCode);
+                            cmd.Parameters.AddWithValue("@sn", measMain.SerialNo);
+                            cmd.Parameters.AddWithValue("@op", measMain.Operator ?? "");
+                            cmd.Parameters.AddWithValue("@td", measMain.TestDate ?? DateTime.Now.ToString("yyyy-MM-dd"));
+                            cmd.Parameters.AddWithValue("@tt", measMain.TestTime ?? DateTime.Now.ToString("HH:mm:ss"));
+                            cmd.Parameters.AddWithValue("@tr", measMain.TestRig ?? Environment.MachineName);
+                            cmd.Parameters.AddWithValue("@sr", measMain.SoftwareRev ?? "");
+                            cmd.Parameters.AddWithValue("@ino", measMain.ItemNo ?? "");
+                            cmd.Parameters.AddWithValue("@inr", measMain.ItemNoRev);
+                            cmd.Parameters.AddWithValue("@pass", measMain.Passed ? 1 : 0);
+                            cmd.Parameters.AddWithValue("@tt2", measMain.TestType.ToString());
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        // INSERT MeasManualTest rows
+                        string sqlManual = @"INSERT INTO MeasManualTest (DeviceCode,TestID,TestData,Passed)
+                            VALUES (@dc,@tid,@td,@pass)";
+                        foreach (var mt in manualTests)
+                        {
+                            using (var cmd = new SqlCommand(sqlManual, _connection, transaction))
+                            {
+                                cmd.Parameters.AddWithValue("@dc", baseCode);
+                                cmd.Parameters.AddWithValue("@tid", mt.TestID);
+                                cmd.Parameters.AddWithValue("@td", mt.TestData);
+                                cmd.Parameters.AddWithValue("@pass", mt.Passed ? 1 : 0);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        transaction.Commit();
+                        Shared.logger?.Log($"DB save complete: {baseCode} | {manualTests.Count} MeasManualTest rows", MessageType.Success);
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        Shared.logger?.LogError($"DB save rolled back for {baseCode}", ex);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.LogError($"SaveTestResultsWithHistory({measMain?.SerialNo})", ex);
+            }
+        }
+
+        private void RenameDeviceCode(string from, string to, SqlTransaction transaction)
+        {
+            foreach (string table in new[] { "MeasMain", "MeasManualTest" })
+            {
+                using (var cmd = new SqlCommand($"UPDATE {table} SET DeviceCode=@to WHERE DeviceCode=@from", _connection, transaction))
+                {
+                    cmd.Parameters.AddWithValue("@from", from);
+                    cmd.Parameters.AddWithValue("@to", to);
                     cmd.ExecuteNonQuery();
                 }
             }
-            catch { }
         }
 
         public List<FinalTestSpecModel> GetFinalTestSpecs(DUTType dutType)
@@ -106,13 +198,32 @@ namespace DuplexerFinalTest.Helpers
                 string itemNo = dutType == DUTType.Base
                     ? Shared.sharedGeneralSettings.GeneralSettings[0].BASE_ITEM_NUMBER
                     : Shared.sharedGeneralSettings.GeneralSettings[0].REMOTE_ITEM_NUMBER;
-                string sql = @"SELECT ts.TestID, ts.TestCaption, ts.TestUnit, ts.LimitMin, ts.LimitMax 
-                               FROM FinalTestSpecs ts 
-                               INNER JOIN ItemSpec i ON i.TestID = ts.TestID 
-                               WHERE i.ItemNo = @itemNo ORDER BY ts.TestID";
-                using (var cmd = new SqlCommand(sql, _connection))
+                Shared.logger?.Log($"GetFinalTestSpecs: dutType={dutType} itemNo={itemNo}");
+
+                // Step 1: get the latest revision for this item number
+                int revisionNo = 0;
+                string sqlRev = "SELECT TOP 1 RevisionNo FROM specmain WHERE Itemno = @itemNo AND RevisionDate <= GETDATE() ORDER BY RevisionNo DESC";
+                using (var cmd = new SqlCommand(sqlRev, _connection))
                 {
                     cmd.Parameters.AddWithValue("@itemNo", itemNo);
+                    var scalar = cmd.ExecuteScalar();
+                    if (scalar != null && scalar != DBNull.Value)
+                        revisionNo = Convert.ToInt32(scalar);
+                    else
+                        Shared.logger?.Log($"GetFinalTestSpecs: no specmain row found for itemNo='{itemNo}' — check BASE_ITEM_NUMBER/REMOTE_ITEM_NUMBER in SettingsGeneral.json", MessageType.Warning);
+                }
+                Shared.logger?.Log($"GetFinalTestSpecs: itemNo={itemNo} revisionNo={revisionNo}");
+
+                // Step 2: get all test specs joined from specmanuallimit + specmanualtest
+                string sqlSpecs = @"SELECT t.TestID, t.TestCaption, t.TestUnit, l.LimitMin, l.LimitMax
+                                    FROM specmanuallimit l
+                                    INNER JOIN specmanualtest t ON l.testid = t.testid
+                                    WHERE l.itemnoid = (SELECT ItemNoId FROM specmain WHERE itemno = @itemNo AND RevisionNo = @rev)
+                                    ORDER BY t.TestID";
+                using (var cmd = new SqlCommand(sqlSpecs, _connection))
+                {
+                    cmd.Parameters.AddWithValue("@itemNo", itemNo);
+                    cmd.Parameters.AddWithValue("@rev", revisionNo);
                     using (var reader = cmd.ExecuteReader())
                     {
                         while (reader.Read())
@@ -120,16 +231,20 @@ namespace DuplexerFinalTest.Helpers
                             list.Add(new FinalTestSpecModel()
                             {
                                 TestID = reader.GetInt32(0),
-                                TestCaption = reader.GetString(1),
+                                TestCaption = reader.IsDBNull(1) ? "" : reader.GetString(1),
                                 TestUnit = reader.IsDBNull(2) ? "" : reader.GetString(2),
-                                LimitMin = reader.IsDBNull(3) ? 0f : reader.GetFloat(3),
-                                LimitMax = reader.IsDBNull(4) ? 0f : reader.GetFloat(4)
+                                LimitMin = reader.IsDBNull(3) ? 0.0 : reader.GetDouble(3),
+                                LimitMax = reader.IsDBNull(4) ? 0.0 : reader.GetDouble(4)
                             });
                         }
                     }
                 }
+                Shared.logger?.Log($"GetFinalTestSpecs: loaded {list.Count} specs for {dutType}");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Shared.logger?.Log($"GetFinalTestSpecs FAILED for {dutType}: {ex.Message}", MessageType.Error);
+            }
             return list;
         }
 
@@ -179,7 +294,7 @@ namespace DuplexerFinalTest.Helpers
                     cmd.Parameters.AddWithValue("@ino", model.ItemNo ?? "");
                     cmd.Parameters.AddWithValue("@inr", model.ItemNoRev);
                     cmd.Parameters.AddWithValue("@pass", model.Passed ? 1 : 0);
-                    cmd.Parameters.AddWithValue("@tt2", (int)model.TestType);
+                    cmd.Parameters.AddWithValue("@tt2", model.TestType.ToString());
                     cmd.ExecuteNonQuery();
                     return true;
                 }

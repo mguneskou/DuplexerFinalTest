@@ -19,14 +19,17 @@ namespace DuplexerFinalTest
             this.scMain = new System.Windows.Forms.SplitContainer();
             this.tlpMain = new System.Windows.Forms.TableLayoutPanel();
             this.lblElapsedTime = new System.Windows.Forms.Label();
+            this.lblTestResult = new System.Windows.Forms.Label();
             this.chartTemperature = new System.Windows.Forms.DataVisualization.Charting.Chart();
             this.prgTestProgress = new System.Windows.Forms.ProgressBar();
+            this.btnCancelTest = new System.Windows.Forms.Button();
             this.lstTestProgress = new System.Windows.Forms.ListView();
             this.label12 = new System.Windows.Forms.Label();
             this.label14 = new System.Windows.Forms.Label();
             this.lblChamberTemperature = new System.Windows.Forms.Label();
             this.lblAverageDUTTemperature = new System.Windows.Forms.Label();
             this.tlpBottom = new System.Windows.Forms.TableLayoutPanel();
+            this.lstEventLog = new System.Windows.Forms.ListView();
             this.tlpEquipment = new System.Windows.Forms.TableLayoutPanel();
             this.pnlOpticalSwitch1x4 = new System.Windows.Forms.Panel();
             this.label1 = new System.Windows.Forms.Label();
@@ -58,6 +61,7 @@ namespace DuplexerFinalTest
             this.menuStrip1 = new System.Windows.Forms.MenuStrip();
             this.mnuFile = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuNewTest = new System.Windows.Forms.ToolStripMenuItem();
+            this.mnuSaveToDatabase = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuCalibration = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuSettings = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuViewLogFiles = new System.Windows.Forms.ToolStripMenuItem();
@@ -85,7 +89,7 @@ namespace DuplexerFinalTest
 
             // mnuFile
             this.mnuFile.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
-                this.mnuNewTest, this.mnuCalibration, this.mnuSettings, this.mnuViewLogFiles,
+                this.mnuNewTest, this.mnuSaveToDatabase, this.mnuCalibration, this.mnuSettings, this.mnuViewLogFiles,
                 this.mnuTestProcedure, this.mnuHelp, new System.Windows.Forms.ToolStripSeparator(), this.mnuExit });
             this.mnuFile.Name = "mnuFile";
             this.mnuFile.Size = new System.Drawing.Size(46, 24);
@@ -96,6 +100,14 @@ namespace DuplexerFinalTest
             this.mnuNewTest.Size = new System.Drawing.Size(200, 24);
             this.mnuNewTest.Text = "New Test";
             this.mnuNewTest.Click += new System.EventHandler(this.MnuNewTest_Click);
+
+            // mnuSaveToDatabase
+            this.mnuSaveToDatabase.Name = "mnuSaveToDatabase";
+            this.mnuSaveToDatabase.Size = new System.Drawing.Size(200, 24);
+            this.mnuSaveToDatabase.Text = "Save to Database";
+            this.mnuSaveToDatabase.Enabled = false;
+            this.mnuSaveToDatabase.Visible = false;
+            this.mnuSaveToDatabase.Click += new System.EventHandler(this.MnuSaveToDatabase_Click);
 
             // mnuCalibration
             this.mnuCalibration.Name = "mnuCalibration";
@@ -153,7 +165,9 @@ namespace DuplexerFinalTest
             this.tlpMain.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 15F));
             this.tlpMain.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 70F));
             this.tlpMain.Controls.Add(this.lblElapsedTime, 0, 0);
+            this.tlpMain.Controls.Add(this.lblTestResult, 1, 0);
             this.tlpMain.Controls.Add(this.prgTestProgress, 0, 1);
+            this.tlpMain.SetColumnSpan(this.prgTestProgress, 2);
             this.tlpMain.Controls.Add(this.label12, 0, 2);
             this.tlpMain.Controls.Add(this.lblChamberTemperature, 1, 2);
             this.tlpMain.Controls.Add(this.label14, 0, 3);
@@ -164,33 +178,51 @@ namespace DuplexerFinalTest
             this.tlpMain.Location = new System.Drawing.Point(0, 0);
             this.tlpMain.Name = "tlpMain";
             this.tlpMain.RowCount = 5;
-            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 5F));
-            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 5F));
-            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 5F));
-            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 5F));
-            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 80F));
+            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 55F));
+            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 38F));
+            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 32F));
+            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 32F));
+            this.tlpMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tlpMain.Size = new System.Drawing.Size(1922, 646);
             this.tlpMain.TabIndex = 12;
 
-            // lblElapsedTime (spans 2 cols)
+            // lblElapsedTime (col 0, row 0)
             this.lblElapsedTime.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.lblElapsedTime.AutoSize = true;
-            this.tlpMain.SetColumnSpan(this.lblElapsedTime, 2);
             this.lblElapsedTime.Font = new System.Drawing.Font("Segoe UI", 9.5f, System.Drawing.FontStyle.Regular);
             this.lblElapsedTime.Location = new System.Drawing.Point(3, 6);
             this.lblElapsedTime.Name = "lblElapsedTime";
-            this.lblElapsedTime.Size = new System.Drawing.Size(570, 20);
+            this.lblElapsedTime.Size = new System.Drawing.Size(282, 20);
             this.lblElapsedTime.TabIndex = 0;
             this.lblElapsedTime.Text = "Elapsed time: 00:00:00";
             this.lblElapsedTime.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
 
-            // prgTestProgress (spans 2 cols)
-            this.tlpMain.SetColumnSpan(this.prgTestProgress, 2);
+            // lblTestResult (col 1, row 0 — shows PASS/FAIL after test)
+            this.lblTestResult.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.lblTestResult.Font = new System.Drawing.Font("Segoe UI", 22f, System.Drawing.FontStyle.Bold);
+            this.lblTestResult.Name = "lblTestResult";
+            this.lblTestResult.TabIndex = 13;
+            this.lblTestResult.Text = "";
+            this.lblTestResult.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+
+            // prgTestProgress (col 0, spans 2 cols)
             this.prgTestProgress.Dock = System.Windows.Forms.DockStyle.Fill;
             this.prgTestProgress.Location = new System.Drawing.Point(3, 35);
             this.prgTestProgress.Name = "prgTestProgress";
-            this.prgTestProgress.Size = new System.Drawing.Size(570, 26);
+            this.prgTestProgress.Size = new System.Drawing.Size(282, 26);
             this.prgTestProgress.TabIndex = 10;
+
+            // btnCancelTest (placed in tlpEquipment row 7, col 3 — greyed out until test starts)
+            this.btnCancelTest.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.btnCancelTest.Name = "btnCancelTest";
+            this.btnCancelTest.Text = "Cancel Test";
+            this.btnCancelTest.BackColor = System.Drawing.Color.Firebrick;
+            this.btnCancelTest.ForeColor = System.Drawing.Color.White;
+            this.btnCancelTest.Font = new System.Drawing.Font("Segoe UI", 9f, System.Drawing.FontStyle.Bold);
+            this.btnCancelTest.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.btnCancelTest.Enabled = false;
+            this.btnCancelTest.TabIndex = 22;
+            this.btnCancelTest.Click += new System.EventHandler(this.BtnCancelTest_Click);
 
             // label12 - Chamber Temperature label
             this.label12.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
@@ -277,6 +309,7 @@ namespace DuplexerFinalTest
             this.tlpBottom.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 35F));
             this.tlpBottom.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 65F));
             this.tlpBottom.Controls.Add(this.tlpEquipment, 0, 0);
+            this.tlpBottom.Controls.Add(this.lstEventLog, 1, 0);
             this.tlpBottom.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tlpBottom.Location = new System.Drawing.Point(0, 0);
             this.tlpBottom.Name = "tlpBottom";
@@ -284,6 +317,13 @@ namespace DuplexerFinalTest
             this.tlpBottom.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tlpBottom.Size = new System.Drawing.Size(1922, 367);
             this.tlpBottom.TabIndex = 0;
+
+            // lstEventLog (event log in bottom-right panel)
+            this.lstEventLog.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.lstEventLog.HideSelection = false;
+            this.lstEventLog.Name = "lstEventLog";
+            this.lstEventLog.TabIndex = 21;
+            this.lstEventLog.UseCompatibleStateImageBehavior = false;
 
             // tlpEquipment (4 cols 5/45/5/45, 8 rows)
             this.tlpEquipment.CellBorderStyle = System.Windows.Forms.TableLayoutPanelCellBorderStyle.Single;
@@ -341,9 +381,9 @@ namespace DuplexerFinalTest
             this.tlpEquipment.Controls.Add(this.pnlDatabase, 0, 6);
             this.tlpEquipment.Controls.Add(this.labelDB, 1, 6);
 
-            // Row 7: Update button
-            this.tlpEquipment.Controls.Add(this.btnUpdateEquipmentStatus, 0, 7);
-            this.tlpEquipment.SetColumnSpan(this.btnUpdateEquipmentStatus, 4);
+            // Row 7: Update button in col 1 | Cancel Test button in col 3
+            this.tlpEquipment.Controls.Add(this.btnUpdateEquipmentStatus, 1, 7);
+            this.tlpEquipment.Controls.Add(this.btnCancelTest, 3, 7);
 
             // Equipment panel indicators (shared setup)
             SetupIndicatorPanel(this.pnlOpticalSwitch1x4);
@@ -376,9 +416,8 @@ namespace DuplexerFinalTest
             SetupLabel(this.labelDB, "Database");
 
             // btnUpdateEquipmentStatus
-            this.btnUpdateEquipmentStatus.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left;
+            this.btnUpdateEquipmentStatus.Dock = System.Windows.Forms.DockStyle.Fill;
             this.btnUpdateEquipmentStatus.Name = "btnUpdateEquipmentStatus";
-            this.btnUpdateEquipmentStatus.Size = new System.Drawing.Size(180, 30);
             this.btnUpdateEquipmentStatus.TabIndex = 20;
             this.btnUpdateEquipmentStatus.Text = "Update Equipment Status";
             this.btnUpdateEquipmentStatus.UseVisualStyleBackColor = true;
@@ -436,6 +475,7 @@ namespace DuplexerFinalTest
         private System.Windows.Forms.SplitContainer scMain;
         private System.Windows.Forms.TableLayoutPanel tlpMain;
         private System.Windows.Forms.Label lblElapsedTime;
+        private System.Windows.Forms.Label lblTestResult;
         private System.Windows.Forms.DataVisualization.Charting.Chart chartTemperature;
         private System.Windows.Forms.ProgressBar prgTestProgress;
         private System.Windows.Forms.ListView lstTestProgress;
@@ -463,9 +503,12 @@ namespace DuplexerFinalTest
         private System.Windows.Forms.Label label11, label13;
         private System.Windows.Forms.Label labelDB;
         private System.Windows.Forms.Button btnUpdateEquipmentStatus;
+        private System.Windows.Forms.Button btnCancelTest;
+        private System.Windows.Forms.ListView lstEventLog;
         private System.Windows.Forms.MenuStrip menuStrip1;
         private System.Windows.Forms.ToolStripMenuItem mnuFile;
         private System.Windows.Forms.ToolStripMenuItem mnuNewTest;
+        private System.Windows.Forms.ToolStripMenuItem mnuSaveToDatabase;
         private System.Windows.Forms.ToolStripMenuItem mnuCalibration;
         private System.Windows.Forms.ToolStripMenuItem mnuSettings;
         private System.Windows.Forms.ToolStripMenuItem mnuViewLogFiles;

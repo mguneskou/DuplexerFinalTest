@@ -3,6 +3,7 @@ using DuplexerFinalTest.Models;
 using System;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -125,17 +126,20 @@ namespace DuplexerFinalTest.Tests
 
                         // Command the chamber
                         Shared.ClimaticChamber.RunRemoteProgram(step.StartTemperature, step.GoTemperature, step.RampDwellMinutes);
+                        Shared.logger?.Log($"Step {step.StepNo} [{action}]: {step.StartTemperature}°C→{step.GoTemperature}°C | RampDwell={step.RampDwellMinutes}min DelayBefore={step.DelayBeforeSweepsMinutes}min DelayAfter={step.DelayAfterSweepsMinutes}min");
                         if (!step.HumidityOff) Shared.ClimaticChamber.SetHumidity(step.GoHumidity);
 
                         if (action == ChamberManualRunActions.RAMP)
                         {
-                            bgw.ReportProgress(i, $"Step {step.StepNo}: RAMP: {step.StartTemperature}°C → {step.GoTemperature}°C");
+                            bgw.ReportProgress(i, $"Step {step.StepNo}: RAMP: {step.StartTemperature}°C → {step.GoTemperature}°C | {TimeSpan.FromMinutes(step.RampDwellMinutes):hh\\:mm\\:ss}");
                             // Wait until chamber reaches target
+                            long rampStart = Shared.testTimer.ElapsedMilliseconds;
                             do
                             {
                                 if (bgw.CancellationPending) { e.Cancel = true; return; }
                                 Thread.Sleep(500);
                             } while (!Shared.ClimaticChamber.IsReady(step.GoTemperature, tempTolerance));
+                            Shared.logger?.Log($"Step {step.StepNo}: RAMP complete in {Shared.testTimer.ElapsedMilliseconds - rampStart}ms | Temp={Shared.ClimaticChamber.GetTemperature()?.MeasuredTemperature:0.0}°C");
                         }
                         else // SOAK
                         {
@@ -143,14 +147,16 @@ namespace DuplexerFinalTest.Tests
                             bgw.ReportProgress(i, $"Step {step.StepNo}: SOAK @ {step.GoTemperature}°C");
 
                             // Delay before sweeps
-                            bgw.ReportProgress(i, $"►Delay before sweeps | {TimeSpan.FromMinutes(step.DelayBeforeSweepsMinutes)}");
-                            long preDelay = Shared.testTimer.ElapsedMilliseconds;
                             long preDelayMs = (long)(step.DelayBeforeSweepsMinutes * 60000.0);
+                            bgw.ReportProgress(i, $"►Delay before sweeps | {TimeSpan.FromMilliseconds(preDelayMs)}");
+                            Shared.logger?.Log($"Step {step.StepNo}: pre-delay {preDelayMs}ms ({step.DelayBeforeSweepsMinutes}min)");
+                            long preDelay = Shared.testTimer.ElapsedMilliseconds;
                             do
                             {
                                 if (bgw.CancellationPending) { e.Cancel = true; return; }
                                 Thread.Sleep(500);
                             } while (Shared.testTimer.ElapsedMilliseconds < preDelay + preDelayMs);
+                            Shared.logger?.Log($"Step {step.StepNo}: pre-delay done (actual {Shared.testTimer.ElapsedMilliseconds - preDelay}ms)");
 
                             // Run tests for this step
                             if (!string.IsNullOrWhiteSpace(step.Tests))
@@ -168,14 +174,16 @@ namespace DuplexerFinalTest.Tests
                             }
 
                             // Delay after sweeps
-                            bgw.ReportProgress(i, $"►Delay after sweeps | {TimeSpan.FromMinutes(step.DelayAfterSweepsMinutes)}");
-                            long postDelay = Shared.testTimer.ElapsedMilliseconds;
                             long postDelayMs = (long)(step.DelayAfterSweepsMinutes * 60000.0);
+                            bgw.ReportProgress(i, $"►Delay after sweeps | {TimeSpan.FromMilliseconds(postDelayMs)}");
+                            Shared.logger?.Log($"Step {step.StepNo}: post-delay {postDelayMs}ms ({step.DelayAfterSweepsMinutes}min)");
+                            long postDelay = Shared.testTimer.ElapsedMilliseconds;
                             do
                             {
                                 if (bgw.CancellationPending) { e.Cancel = true; return; }
                                 Thread.Sleep(500);
                             } while (Shared.testTimer.ElapsedMilliseconds < postDelay + postDelayMs);
+                            Shared.logger?.Log($"Step {step.StepNo}: post-delay done (actual {Shared.testTimer.ElapsedMilliseconds - postDelay}ms)");
                         }
 
                         Thread.Sleep(50);
@@ -191,31 +199,90 @@ namespace DuplexerFinalTest.Tests
         private void RunTest(TestSequences testType, BackgroundWorker bgw, int stepIndex, int sweepNo,
             double temperature, ref bool stepPassed, ref DoWorkEventArgs e)
         {
-            _testResults = new TestResultModel { OverallPassFail = OverallPassFail.FAIL, SaveIntoProductionDB = true };
-            bool result = false;
-            bool cancelled = false;
+            int retryCount = 0;
 
-            switch (testType)
+            while (true)
             {
-                case TestSequences.Base_Z_IB_IOP:
-                    result = IndividualTestRun.RunBase_Z_IB_IOP(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
-                    break;
-                case TestSequences.Base_Z_IPD:
-                    result = IndividualTestRun.RunBase_Z_IPD(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
-                    break;
-                case TestSequences.Remote_Z_IOP:
-                    result = IndividualTestRun.RunRemote_Z_IOP(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
-                    break;
-                case TestSequences.Remote_Z_IPV:
-                    result = IndividualTestRun.RunRemote_Z_IPV(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
-                    break;
-                case TestSequences.Remote_Z_VPV:
-                    result = IndividualTestRun.RunRemote_Z_VPV(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
-                    break;
-            }
+                _testResults = new TestResultModel { OverallPassFail = OverallPassFail.FAIL, SaveIntoProductionDB = true };
+                bool result = false;
+                bool cancelled = false;
 
-            stepPassed = result;
-            if (cancelled) e.Cancel = true;
+                try
+                {
+                    switch (testType)
+                    {
+                        case TestSequences.Base_Z_IB_IOP:
+                            result = IndividualTestRun.RunBase_Z_IB_IOP(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
+                            break;
+                        case TestSequences.Base_Z_IPD:
+                            result = IndividualTestRun.RunBase_Z_IPD(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
+                            break;
+                        case TestSequences.Remote_Z_IOP:
+                            result = IndividualTestRun.RunRemote_Z_IOP(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
+                            break;
+                        case TestSequences.Remote_Z_IPV:
+                            result = IndividualTestRun.RunRemote_Z_IPV(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
+                            break;
+                        case TestSequences.Remote_Z_VPV:
+                            result = IndividualTestRun.RunRemote_Z_VPV(sequence, _testResults, bgw, stepIndex, sweepNo, temperature, out cancelled);
+                            break;
+                    }
+
+                    stepPassed = result;
+                    if (cancelled) e.Cancel = true;
+                    return; // success — exit retry loop
+                }
+                catch (EquipmentCommunicationException ex) when (!bgw.CancellationPending)
+                {
+                    retryCount++;
+                    Shared.logger?.Log(
+                        $"Equipment communication failure (attempt {retryCount}): {ex.Message}",
+                        MessageType.Error);
+
+                    // Delay schedule: attempt 1 → 10 min, attempt 2 → 15 min, attempt 3+ → wait for user
+                    TimeSpan delay = retryCount == 1 ? TimeSpan.FromMinutes(10)
+                                   : retryCount == 2 ? TimeSpan.FromMinutes(15)
+                                   : TimeSpan.Zero;
+
+                    bgw.ReportProgress(stepIndex,
+                        retryCount <= 2
+                            ? $"⚠ Comm failure — retry {retryCount} in {(int)delay.TotalMinutes} min: {ex.Message}"
+                            : $"⚠ Comm failure — waiting for operator: {ex.Message}");
+
+                    var dialogResult = ShowRetryCountdownDialog(ex.Message, delay, retryCount);
+
+                    if (dialogResult == RetryCountdownResult.Cancel || bgw.CancellationPending)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+                    // ResumeNow → loop back and retry the same test step from the top
+                    Shared.logger?.Log($"Operator resumed — retrying {testType}", MessageType.Warning);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Marshals a RetryCountdownForm onto the UI thread and blocks the background worker
+        /// until the operator clicks Resume Now (or the countdown expires) or Cancel Test.
+        /// </summary>
+        private RetryCountdownResult ShowRetryCountdownDialog(string errorMessage, TimeSpan delay, int attemptNumber)
+        {
+            var result = RetryCountdownResult.Cancel;
+            var mainForm = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
+            if (mainForm == null || mainForm.IsDisposed)
+                return RetryCountdownResult.Cancel;
+
+            mainForm.Invoke((MethodInvoker)delegate
+            {
+                using (var form = new RetryCountdownForm(errorMessage, delay, attemptNumber))
+                {
+                    form.ShowDialog(mainForm);
+                    result = form.Result;
+                }
+            });
+
+            return result;
         }
 
         private void TestWorker_ProgressChanged(object sender, ProgressChangedEventArgs e)

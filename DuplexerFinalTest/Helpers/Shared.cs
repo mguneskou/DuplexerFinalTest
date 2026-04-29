@@ -32,7 +32,6 @@ namespace DuplexerFinalTest.Helpers
         // Application services
         public static ProductionDatabase productionDatabase { get; set; } = new ProductionDatabase();
         public static Logger logger { get; set; }
-        public static MessageViewer messageViewer { get; set; }
         public static TestRun testRun { get; set; } = new TestRun();
         public static GeneralSettingsModel sharedGeneralSettings { get; set; }
         public static InfoModel infoModel { get; set; } = new InfoModel();
@@ -43,11 +42,6 @@ namespace DuplexerFinalTest.Helpers
         public static MainForm mainForm { get; set; }
         public static StartForm startForm { get; set; }
         public static SettingsForm settingsForm { get; set; } = new SettingsForm();
-
-        public static void InitialiseMessageViewer(System.Windows.Forms.TableLayoutPanel panel)
-        {
-            messageViewer = new MessageViewer(panel?.FindForm());
-        }
 
         // Images
         public static Image ConnectedImage { get; set; }
@@ -174,8 +168,8 @@ namespace DuplexerFinalTest.Helpers
 
                 // DB connection panel
                 bool dbOk = false;
-                try { productionDatabase?.ConnectToServer(); dbOk = true; }
-                catch (Exception ex) { logger?.Log($"Database connection failed: {ex.Message}"); }
+                try { productionDatabase?.ConnectToServer(); dbOk = true; logger?.Log("Database connected", MessageType.Success); }
+                catch (Exception ex) { logger?.Log($"Database connection failed: {ex.Message}", MessageType.Error); }
                 SetPanel(pnlDB, dbOk);
 
                 // Load test specs once DB is connected
@@ -185,8 +179,9 @@ namespace DuplexerFinalTest.Helpers
                     {
                         testSpecsBase   = productionDatabase.GetFinalTestSpecs(DUTType.Base);
                         testSpecsRemote = productionDatabase.GetFinalTestSpecs(DUTType.Remote);
+                        logger?.Log($"Test specs loaded: Base={testSpecsBase?.Count ?? 0} specs, Remote={testSpecsRemote?.Count ?? 0} specs", MessageType.Success);
                     }
-                    catch (Exception ex) { logger?.Log($"Get test specs failed: {ex.Message}"); }
+                    catch (Exception ex) { logger?.Log($"Get test specs failed: {ex.Message}", MessageType.Error); }
                 }
             });
         }

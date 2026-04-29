@@ -3,8 +3,6 @@ using DuplexerFinalTest.Models;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.Data;
-using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 
@@ -12,6 +10,22 @@ namespace DuplexerFinalTest
 {
     public partial class SettingsForm : Form
     {
+        // Row indices in dgvEquipment (must match PopulateEquipmentGrid order)
+        private const int ROW_ELEC1       = 0;
+        private const int ROW_ELEC2       = 1;
+        private const int ROW_ELEC3       = 2;
+        private const int ROW_ELEC4       = 3;
+        private const int ROW_ELEC5       = 4;
+        private const int ROW_ELEC6       = 5;
+        private const int ROW_OPT1X4_1   = 6;
+        private const int ROW_OPT1X4_2   = 7;
+        private const int ROW_OPT1X13_1  = 8;
+        private const int ROW_OPT1X13_2  = 9;
+        private const int ROW_SMU_MASTER  = 10;
+        private const int ROW_SMU_SLAVE   = 11;
+        private const int ROW_CHAMBER_IP  = 12;
+        private const int ROW_CHAMBER_PORT = 13;
+
         public SettingsForm()
         {
             InitializeComponent();
@@ -21,67 +35,106 @@ namespace DuplexerFinalTest
         {
             try
             {
+                lblSettingsPath.Text = $"Editing: {Shared.GeneralSettingsPath}";
+
                 Shared.sharedGeneralSettings = ReadGeneralSettings();
-                dgvGeneralSettings.DataSource = Shared.sharedGeneralSettings.Transpose();
-                dgvGeneralSettings.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
-                dgvGeneralSettings.Columns[0].ReadOnly = true;
-                dgvGeneralSettings.Columns[0].DefaultCellStyle.BackColor = Color.Silver;
+                var s = Shared.sharedGeneralSettings.GeneralSettings[0];
+
+                // General tab
+                txtPcName.Text         = s.PC_NAME;
+                txtBaseItemNo.Text     = s.BASE_ITEM_NUMBER;
+                txtRemoteItemNo.Text   = s.REMOTE_ITEM_NUMBER;
+                txtSerialNoLength.Text = s.SERIAL_NO_LENGTH;
+                txtPlotUpdate.Text     = s.PLOT_UPDATE_IN_MINUTES;
+
+                // Equipment tab
+                PopulateEquipmentGrid(s);
+
+                // Paths tab
+                txtResultsFolder.Text   = s.RESULTS_FOLDER;
+                txtResourcesFolder.Text = s.RESOURCES_FOLDER;
+
+                // Database & Simulation tab
+                chkUseSimulators.Checked    = IsTrue(s.USE_SIMULATORS);
+                chkUseLocalDatabase.Checked = IsTrue(s.USE_LOCAL_DATABASE);
+                txtConnectionString.Text    = s.LOCAL_DATABASE_CONNECTION_STRING;
+                chkSaveAuto.Checked         = IsTrue(s.SAVE_RESULTS_TO_DB_AUTO);
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Settings form load: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Settings form load: {ex.Message}", MessageType.Error);
             }
+        }
+
+        private void PopulateEquipmentGrid(GeneralSetting s)
+        {
+            dgvEquipment.Rows.Clear();
+            dgvEquipment.Rows.Add("Electrical Switch #1",    s.ELECTRICAL_SWITCH1_RESOURCE);
+            dgvEquipment.Rows.Add("Electrical Switch #2",    s.ELECTRICAL_SWITCH2_RESOURCE);
+            dgvEquipment.Rows.Add("Electrical Switch #3",    s.ELECTRICAL_SWITCH3_RESOURCE);
+            dgvEquipment.Rows.Add("Electrical Switch #4",    s.ELECTRICAL_SWITCH4_RESOURCE);
+            dgvEquipment.Rows.Add("Electrical Switch #5",    s.ELECTRICAL_SWITCH5_RESOURCE);
+            dgvEquipment.Rows.Add("Electrical Switch #6",    s.ELECTRICAL_SWITCH6_RESOURCE);
+            dgvEquipment.Rows.Add("Optical Switch 1\u00d74 #1",  s.OPTICAL_SWITCH1x4_1_RESOURCE);
+            dgvEquipment.Rows.Add("Optical Switch 1\u00d74 #2",  s.OPTICAL_SWITCH1x4_2_RESOURCE);
+            dgvEquipment.Rows.Add("Optical Switch 1\u00d713 #1", s.OPTICAL_SWITCH1x13_1_RESOURCE);
+            dgvEquipment.Rows.Add("Optical Switch 1\u00d713 #2", s.OPTICAL_SWITCH1x13_2_RESOURCE);
+            dgvEquipment.Rows.Add("SMU - Master",             s.SMU_MASTER_RESOURCE);
+            dgvEquipment.Rows.Add("SMU - Slave",              s.SMU_SLAVE_RESOURCE);
+            dgvEquipment.Rows.Add("Climatic Chamber IP",      s.CLIMATIC_CHAMBER_IP_ADDRESS);
+            dgvEquipment.Rows.Add("Climatic Chamber Port",    s.CLIMATIC_CHAMBER_PORT);
         }
 
         private void BtnSave_Click(object sender, EventArgs e)
         {
             try
             {
-                dgvGeneralSettings.EndEdit();
-                var dt = dgvGeneralSettings.DataSource as DataTable;
+                dgvEquipment.EndEdit();
 
                 var model = new GeneralSettingsModel();
                 model.GeneralSettings = new List<GeneralSetting>();
                 model.GeneralSettings.Add(new GeneralSetting()
                 {
-                    PC_NAME                          = dt.Rows[0][1].ToString(),
-                    BASE_ITEM_NUMBER                 = dt.Rows[1][1].ToString(),
-                    REMOTE_ITEM_NUMBER               = dt.Rows[2][1].ToString(),
-                    SERIAL_NO_LENGTH                 = dt.Rows[3][1].ToString(),
-                    PLOT_UPDATE_IN_MINUTES           = dt.Rows[4][1].ToString(),
-                    CLIMATIC_CHAMBER_IP_ADDRESS      = dt.Rows[5][1].ToString(),
-                    CLIMATIC_CHAMBER_PORT            = dt.Rows[6][1].ToString(),
-                    ELECTRICAL_SWITCH1_RESOURCE      = dt.Rows[7][1].ToString(),
-                    ELECTRICAL_SWITCH2_RESOURCE      = dt.Rows[8][1].ToString(),
-                    ELECTRICAL_SWITCH3_RESOURCE      = dt.Rows[9][1].ToString(),
-                    ELECTRICAL_SWITCH4_RESOURCE      = dt.Rows[10][1].ToString(),
-                    ELECTRICAL_SWITCH5_RESOURCE      = dt.Rows[11][1].ToString(),
-                    ELECTRICAL_SWITCH6_RESOURCE      = dt.Rows[12][1].ToString(),
-                    OPTICAL_SWITCH1x4_1_RESOURCE     = dt.Rows[13][1].ToString(),
-                    OPTICAL_SWITCH1x4_2_RESOURCE     = dt.Rows[14][1].ToString(),
-                    OPTICAL_SWITCH1x13_1_RESOURCE    = dt.Rows[15][1].ToString(),
-                    OPTICAL_SWITCH1x13_2_RESOURCE    = dt.Rows[16][1].ToString(),
-                    SMU_MASTER_RESOURCE              = dt.Rows[17][1].ToString(),
-                    SMU_SLAVE_RESOURCE               = dt.Rows[18][1].ToString(),
-                    RESULTS_FOLDER                   = dt.Rows[19][1].ToString(),
-                    RESOURCES_FOLDER                 = dt.Rows[20][1].ToString(),
-                    USE_SIMULATORS                   = dt.Rows[21][1].ToString(),
-                    USE_LOCAL_DATABASE               = dt.Rows[22][1].ToString(),
-                    LOCAL_DATABASE_CONNECTION_STRING = dt.Rows[23][1].ToString(),
+                    PC_NAME                          = txtPcName.Text.Trim(),
+                    BASE_ITEM_NUMBER                 = txtBaseItemNo.Text.Trim(),
+                    REMOTE_ITEM_NUMBER               = txtRemoteItemNo.Text.Trim(),
+                    SERIAL_NO_LENGTH                 = txtSerialNoLength.Text.Trim(),
+                    PLOT_UPDATE_IN_MINUTES           = txtPlotUpdate.Text.Trim(),
+                    ELECTRICAL_SWITCH1_RESOURCE      = CellValue(ROW_ELEC1),
+                    ELECTRICAL_SWITCH2_RESOURCE      = CellValue(ROW_ELEC2),
+                    ELECTRICAL_SWITCH3_RESOURCE      = CellValue(ROW_ELEC3),
+                    ELECTRICAL_SWITCH4_RESOURCE      = CellValue(ROW_ELEC4),
+                    ELECTRICAL_SWITCH5_RESOURCE      = CellValue(ROW_ELEC5),
+                    ELECTRICAL_SWITCH6_RESOURCE      = CellValue(ROW_ELEC6),
+                    OPTICAL_SWITCH1x4_1_RESOURCE     = CellValue(ROW_OPT1X4_1),
+                    OPTICAL_SWITCH1x4_2_RESOURCE     = CellValue(ROW_OPT1X4_2),
+                    OPTICAL_SWITCH1x13_1_RESOURCE    = CellValue(ROW_OPT1X13_1),
+                    OPTICAL_SWITCH1x13_2_RESOURCE    = CellValue(ROW_OPT1X13_2),
+                    SMU_MASTER_RESOURCE              = CellValue(ROW_SMU_MASTER),
+                    SMU_SLAVE_RESOURCE               = CellValue(ROW_SMU_SLAVE),
+                    CLIMATIC_CHAMBER_IP_ADDRESS      = CellValue(ROW_CHAMBER_IP),
+                    CLIMATIC_CHAMBER_PORT            = CellValue(ROW_CHAMBER_PORT),
+                    RESULTS_FOLDER                   = txtResultsFolder.Text.Trim(),
+                    RESOURCES_FOLDER                 = txtResourcesFolder.Text.Trim(),
+                    USE_SIMULATORS                   = BoolStr(chkUseSimulators.Checked),
+                    USE_LOCAL_DATABASE               = BoolStr(chkUseLocalDatabase.Checked),
+                    LOCAL_DATABASE_CONNECTION_STRING = txtConnectionString.Text.Trim(),
+                    SAVE_RESULTS_TO_DB_AUTO          = BoolStr(chkSaveAuto.Checked),
                 });
 
                 WriteGeneralSettings(model);
                 Shared.sharedGeneralSettings = ReadGeneralSettings();
-
-                // Re-initialize equipment if simulator/database settings changed
                 Shared.InitializeEquipment(Shared.sharedGeneralSettings);
 
-                MessageBox.Show("Settings saved successfully.");
+                MessageBox.Show("Settings saved successfully.", "Settings",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
                 this.Close();
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Settings save: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Settings save: {ex.Message}", MessageType.Error);
+                MessageBox.Show($"Failed to save settings:\n{ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -90,15 +143,35 @@ namespace DuplexerFinalTest
             this.Close();
         }
 
+        private void BtnBrowseResults_Click(object sender, EventArgs e)
+        {
+            using (var dlg = new FolderBrowserDialog())
+            {
+                dlg.Description  = "Select Results Folder";
+                dlg.SelectedPath = txtResultsFolder.Text;
+                if (dlg.ShowDialog() == DialogResult.OK)
+                    txtResultsFolder.Text = dlg.SelectedPath;
+            }
+        }
+
+        private void BtnBrowseResources_Click(object sender, EventArgs e)
+        {
+            using (var dlg = new FolderBrowserDialog())
+            {
+                dlg.Description  = "Select Resources Folder";
+                dlg.SelectedPath = txtResourcesFolder.Text;
+                if (dlg.ShowDialog() == DialogResult.OK)
+                    txtResourcesFolder.Text = dlg.SelectedPath;
+            }
+        }
+
         public GeneralSettingsModel ReadGeneralSettings()
         {
             try
             {
                 string json;
                 using (var sr = new StreamReader(Shared.GeneralSettingsPath))
-                {
                     json = sr.ReadToEnd();
-                }
                 return JsonConvert.DeserializeObject<GeneralSettingsModel>(json);
             }
             catch (Exception ex)
@@ -119,5 +192,16 @@ namespace DuplexerFinalTest
                 throw new Exception($"Cannot write general settings. => {ex.Message}");
             }
         }
+
+        // ── Helpers ──────────────────────────────────────────────────────
+        private string CellValue(int row) =>
+            dgvEquipment.Rows[row].Cells["colResource"].Value?.ToString() ?? string.Empty;
+
+        private static bool IsTrue(string value) =>
+            value?.Trim().ToLower() == "true";
+
+        private static string BoolStr(bool value) =>
+            value ? "true" : "false";
     }
 }
+

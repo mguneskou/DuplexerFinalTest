@@ -41,7 +41,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Start form load: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Start form load: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -71,7 +71,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Pretest button: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Pretest button: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -108,7 +108,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Start button: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Start button: {ex.Message}", MessageType.Error);
             }
         }
 

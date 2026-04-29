@@ -68,7 +68,7 @@ namespace DuplexerFinalTest.Tests
                 var smuSlave_CH1 = BuildSMUSettings(Shared.Base_Z_IB_IOP.SMU2.Channels[0]);
 
                 if (!Shared.OpticalSwitch1x4.CloseChannel(1))
-                    throw new Exception("Optical switch 1x4 cannot close channel 1.");
+                    throw new EquipmentCommunicationException("Optical switch 1x4 cannot close channel 1.");
 
                 Shared.ElectricalSwitchBase2.Reset();
 
@@ -78,15 +78,15 @@ namespace DuplexerFinalTest.Tests
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
                     if (!Shared.OpticalSwitch1x13_Base.CloseChannel(DUT.Slot))
-                        throw new Exception($"Base optical switch 1x13 cannot close channel {DUT.Slot}.");
+                        throw new EquipmentCommunicationException($"Base optical switch 1x13 cannot close channel {DUT.Slot}.");
 
                     if (!Shared.ElectricalSwitchBase1.CloseChannels(
                         new List<int>() { Shared.Base_Z_IB_IOP.ElectricalSwitch1.Positions[DUT.Slot - 1].FromChannel }))
-                        throw new Exception("Base electrical switch #1 error.");
+                        throw new EquipmentCommunicationException("Base electrical switch #1 error.");
 
                     if (!Shared.ElectricalSwitchBase3.CloseChannels(
                         new List<int>() { Shared.Base_Z_IB_IOP.ElectricalSwitch2.Positions[0].FromChannel }))
-                        throw new Exception("Base electrical switch #3 error.");
+                        throw new EquipmentCommunicationException("Base electrical switch #3 error.");
 
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster_CH1);
@@ -136,6 +136,10 @@ namespace DuplexerFinalTest.Tests
                 bgw.ReportProgress(index, $"►Base_Z_IB_IOP @{temperature}°C | Passed");
                 return true;
             }
+            catch (EquipmentCommunicationException)
+            {
+                throw; // propagate to TestRun retry loop
+            }
             catch (Exception ex)
             {
                 Shared.logger?.LogError("RunBase_Z_IB_IOP", ex);
@@ -156,7 +160,7 @@ namespace DuplexerFinalTest.Tests
                 var smuSlave = BuildSMUSettings(Shared.Base_Z_IPD.SMU2.Channels[0]);
 
                 if (!Shared.OpticalSwitch1x4.CloseChannel(3))
-                    throw new Exception("Optical switch 1x4 cannot close channel 3.");
+                    throw new EquipmentCommunicationException("Optical switch 1x4 cannot close channel 3.");
 
                 Shared.ElectricalSwitchBase2.Reset();
 
@@ -166,21 +170,21 @@ namespace DuplexerFinalTest.Tests
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
                     if (!Shared.OpticalSwitch1x13_Base.CloseChannel(DUT.Slot))
-                        throw new Exception($"Base optical switch 1x13 cannot close channel {DUT.Slot}.");
+                        throw new EquipmentCommunicationException($"Base optical switch 1x13 cannot close channel {DUT.Slot}.");
 
                     if (!Shared.ElectricalSwitchBase1.CloseChannels(new List<int>()
                         {
                             Shared.Base_Z_IPD.ElectricalSwitch1.Positions[0].FromChannel,
                             Shared.Base_Z_IPD.ElectricalSwitch1.Positions[0].ToChannel
                         }))
-                        throw new Exception("Base electrical switch #1 error (Z_IPD).");
+                        throw new EquipmentCommunicationException("Base electrical switch #1 error (Z_IPD).");
 
                     if (!Shared.ElectricalSwitchBase3.CloseChannels(new List<int>()
                         {
                             Shared.Base_Z_IPD.ElectricalSwitch2.Positions[DUT.Slot - 1].FromChannel,
                             Shared.Base_Z_IPD.ElectricalSwitch2.Positions[DUT.Slot - 1].ToChannel
                         }))
-                        throw new Exception("Base electrical switch #3 error (Z_IPD).");
+                        throw new EquipmentCommunicationException("Base electrical switch #3 error (Z_IPD).");
 
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
@@ -213,6 +217,10 @@ namespace DuplexerFinalTest.Tests
                 bgw.ReportProgress(index, $"►Base_Z_IPD @{temperature}°C | Passed");
                 return true;
             }
+            catch (EquipmentCommunicationException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 Shared.logger?.LogError("RunBase_Z_IPD", ex);
@@ -233,7 +241,7 @@ namespace DuplexerFinalTest.Tests
                 var smuSlave = BuildSMUSettings(Shared.Remote_Z_IOP.SMU2.Channels[0]);
 
                 if (!Shared.OpticalSwitch1x4.CloseChannel(1))
-                    throw new Exception("Optical switch 1x4 cannot close channel 1 (Remote_Z_IOP).");
+                    throw new EquipmentCommunicationException("Optical switch 1x4 cannot close channel 1 (Remote_Z_IOP).");
 
                 Shared.ElectricalSwitchRemote2.Reset();
 
@@ -243,7 +251,7 @@ namespace DuplexerFinalTest.Tests
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
                     if (!Shared.OpticalSwitch1x13_Remote.CloseChannel(DUT.Slot))
-                        throw new Exception($"Remote optical switch 1x13 cannot close channel {DUT.Slot}.");
+                        throw new EquipmentCommunicationException($"Remote optical switch 1x13 cannot close channel {DUT.Slot}.");
 
                     // DUT.Slot is 1-based per type (1–12)
                     if (!Shared.ElectricalSwitchRemote1.CloseChannels(new List<int>()
@@ -251,14 +259,14 @@ namespace DuplexerFinalTest.Tests
                             Shared.Remote_Z_IOP.ElectricalSwitch1.Positions[DUT.Slot - 1].FromChannel,
                             Shared.Remote_Z_IOP.ElectricalSwitch1.Positions[DUT.Slot - 1].ToChannel
                         }))
-                        throw new Exception("Remote electrical switch #1 error (Z_IOP).");
+                        throw new EquipmentCommunicationException("Remote electrical switch #1 error (Z_IOP).");
 
                     if (!Shared.ElectricalSwitchRemote3.CloseChannels(new List<int>()
                         {
                             Shared.Remote_Z_IOP.ElectricalSwitch2.Positions[0].FromChannel,
                             Shared.Remote_Z_IOP.ElectricalSwitch2.Positions[0].ToChannel
                         }))
-                        throw new Exception("Remote electrical switch #3 error (Z_IOP).");
+                        throw new EquipmentCommunicationException("Remote electrical switch #3 error (Z_IOP).");
 
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
@@ -299,6 +307,10 @@ namespace DuplexerFinalTest.Tests
                 bgw.ReportProgress(index, $"►Remote_Z_IOP @{temperature}°C | Passed");
                 return true;
             }
+            catch (EquipmentCommunicationException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 Shared.logger?.LogError("RunRemote_Z_IOP", ex);
@@ -319,7 +331,7 @@ namespace DuplexerFinalTest.Tests
                 var smuSlave = BuildSMUSettings(Shared.Remote_Z_IPV.SMU2.Channels[0]);
 
                 if (!Shared.OpticalSwitch1x4.CloseChannel(1))
-                    throw new Exception("Optical switch 1x4 cannot close channel 1 (Remote_Z_IPV).");
+                    throw new EquipmentCommunicationException("Optical switch 1x4 cannot close channel 1 (Remote_Z_IPV).");
 
                 Shared.ElectricalSwitchRemote2.Reset();
 
@@ -329,14 +341,14 @@ namespace DuplexerFinalTest.Tests
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
                     if (!Shared.OpticalSwitch1x13_Remote.CloseChannel(DUT.Slot))
-                        throw new Exception($"Remote optical switch 1x13 cannot close channel {DUT.Slot}.");
+                        throw new EquipmentCommunicationException($"Remote optical switch 1x13 cannot close channel {DUT.Slot}.");
 
                     if (!Shared.ElectricalSwitchRemote1.CloseChannels(new List<int>()
                         {
                             Shared.Remote_Z_IPV.ElectricalSwitch1.Positions[0].FromChannel,
                             Shared.Remote_Z_IPV.ElectricalSwitch1.Positions[0].ToChannel
                         }))
-                        throw new Exception("Remote electrical switch #1 error (Z_IPV).");
+                        throw new EquipmentCommunicationException("Remote electrical switch #1 error (Z_IPV).");
 
                     // DUT.Slot is 1-based per type (1–12)
                     if (!Shared.ElectricalSwitchRemote3.CloseChannels(new List<int>()
@@ -344,7 +356,7 @@ namespace DuplexerFinalTest.Tests
                             Shared.Remote_Z_IPV.ElectricalSwitch2.Positions[DUT.Slot - 1].FromChannel,
                             Shared.Remote_Z_IPV.ElectricalSwitch2.Positions[DUT.Slot - 1].ToChannel
                         }))
-                        throw new Exception("Remote electrical switch #3 error (Z_IPV).");
+                        throw new EquipmentCommunicationException("Remote electrical switch #3 error (Z_IPV).");
 
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
@@ -377,6 +389,10 @@ namespace DuplexerFinalTest.Tests
                 bgw.ReportProgress(index, $"►Remote_Z_IPV @{temperature}°C | Passed");
                 return true;
             }
+            catch (EquipmentCommunicationException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 Shared.logger?.LogError("RunRemote_Z_IPV", ex);
@@ -397,7 +413,7 @@ namespace DuplexerFinalTest.Tests
                 var smuSlave = BuildSMUSettings(Shared.Remote_Z_VPV.SMU2.Channels[0]);
 
                 if (!Shared.OpticalSwitch1x4.CloseChannel(1))
-                    throw new Exception("Optical switch 1x4 cannot close channel 1 (Remote_Z_VPV).");
+                    throw new EquipmentCommunicationException("Optical switch 1x4 cannot close channel 1 (Remote_Z_VPV).");
 
                 Shared.ElectricalSwitchRemote2.Reset();
 
@@ -407,14 +423,14 @@ namespace DuplexerFinalTest.Tests
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
                     if (!Shared.OpticalSwitch1x13_Remote.CloseChannel(DUT.Slot))
-                        throw new Exception($"Remote optical switch 1x13 cannot close channel {DUT.Slot}.");
+                        throw new EquipmentCommunicationException($"Remote optical switch 1x13 cannot close channel {DUT.Slot}.");
 
                     if (!Shared.ElectricalSwitchRemote1.CloseChannels(new List<int>()
                         {
                             Shared.Remote_Z_VPV.ElectricalSwitch1.Positions[0].FromChannel,
                             Shared.Remote_Z_VPV.ElectricalSwitch1.Positions[0].ToChannel
                         }))
-                        throw new Exception("Remote electrical switch #1 error (Z_VPV).");
+                        throw new EquipmentCommunicationException("Remote electrical switch #1 error (Z_VPV).");
 
                     // DUT.Slot is 1-based per type (1–12)
                     if (!Shared.ElectricalSwitchRemote3.CloseChannels(new List<int>()
@@ -422,7 +438,7 @@ namespace DuplexerFinalTest.Tests
                             Shared.Remote_Z_VPV.ElectricalSwitch2.Positions[DUT.Slot - 1].FromChannel,
                             Shared.Remote_Z_VPV.ElectricalSwitch2.Positions[DUT.Slot - 1].ToChannel
                         }))
-                        throw new Exception("Remote electrical switch #3 error (Z_VPV).");
+                        throw new EquipmentCommunicationException("Remote electrical switch #3 error (Z_VPV).");
 
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
@@ -465,6 +481,10 @@ namespace DuplexerFinalTest.Tests
                 Shared.SMU_slave.CloseAllChannels();
                 bgw.ReportProgress(index, $"►Remote_Z_VPV @{temperature}°C | Passed");
                 return true;
+            }
+            catch (EquipmentCommunicationException)
+            {
+                throw;
             }
             catch (Exception ex)
             {

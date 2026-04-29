@@ -36,25 +36,22 @@ namespace DuplexerFinalTest
 
         private void MainForm_Load(object sender, EventArgs e)
         {
-            // Initialise logger
+            // Initialise logger - writes to P:\MGunes\DuplexerTestSuite\Logs with session timestamp
             try
             {
-                Shared.loggingPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                    @"DuplexerFinalTest\logs");
-                Directory.CreateDirectory(Shared.loggingPath);
-                Shared.logger = new Logger(Path.Combine(Shared.loggingPath,
-                    $"log-{DateTime.Now:dd_MM_yyyy-HH_mm_ss}.txt"));
+                string logFolder = @"P:\MGunes\DuplexerTestSuite\Logs";
+                Shared.logger = new Logger(logFolder);
+                Shared.logger.Log("Application started");
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message);
+                MessageBox.Show($"Logger init failed: {ex.Message}");
             }
 
-            // Initialise message viewer
+            // Attach the event-log ListView (handle is ready after InitializeComponent)
             try
             {
-                Shared.InitialiseMessageViewer(tlpBottom);
+                Shared.logger?.AttachListView(lstEventLog);
             }
             catch (Exception ex)
             {
@@ -64,10 +61,16 @@ namespace DuplexerFinalTest
             // Read general settings
             try
             {
-                Shared.GeneralSettingsPath = Path.Combine(
-                    Application.StartupPath, "Resources", "Settings", "SettingsGeneral.json");
+                Shared.GeneralSettingsPath = @"P:\MGunes\DuplexerTestSuite\Resources\Settings\SettingsGeneral.json";
                 Shared.sharedGeneralSettings = Shared.settingsForm.ReadGeneralSettings();
                 Shared.InitializeEquipment(Shared.sharedGeneralSettings);
+
+                // Configure "Save to Database" menu item based on auto-save setting
+                bool autoSave = Shared.sharedGeneralSettings?.GeneralSettings[0]
+                    .SAVE_RESULTS_TO_DB_AUTO?.Trim().ToLower() == "true";
+                mnuSaveToDatabase.Visible = false;   // hidden until test ends (in both modes)
+                mnuSaveToDatabase.Enabled = false;
+                Shared.logger?.Log($"DB auto-save: {(autoSave ? "ON" : "OFF")}");
             }
             catch (Exception ex)
             {
@@ -135,7 +138,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.logger?.Log($"Image load failed: {ex.Message}");
+                Shared.logger?.Log($"Image load failed: {ex.Message}", MessageType.Warning);
             }
 
             // Connect equipment
@@ -153,7 +156,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Cannot connect equipment: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Cannot connect equipment: {ex.Message}", MessageType.Error);
             }
 
             // Database connection and test specs are handled by CheckEquipmentConnections (background task)
@@ -162,6 +165,8 @@ namespace DuplexerFinalTest
             waitForm.Dispose();
             waitForm = null;
             this.Enabled = true;
+
+            Shared.logger?.Log("Application startup complete");
 
             // Set software version in title bar
             try
@@ -179,6 +184,7 @@ namespace DuplexerFinalTest
         {
             try
             {
+                Shared.logger?.Log("Application closing - disconnecting equipment");
                 timerElapsed.Stop();
                 Shared.testRun?.StopTest();
                 Shared.SMU_master?.Disconnect();
@@ -193,10 +199,11 @@ namespace DuplexerFinalTest
                 Shared.ElectricalSwitchRemote2?.Disconnect();
                 Shared.ElectricalSwitchRemote3?.Disconnect();
                 Shared.ClimaticChamber?.Disconnect();
+                Shared.logger?.Log("Application closed");
             }
             catch (Exception ex)
             {
-                Shared.logger?.Log($"Form closing error: {ex.Message}");
+                Shared.logger?.Log($"Form closing error: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -212,7 +219,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Update equipment status: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Update equipment status: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -228,6 +235,32 @@ namespace DuplexerFinalTest
             catch { }
         }
 
+        #region Cancel Test Button
+
+        private void BtnCancelTest_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                Shared.logger?.Log("Cancel test requested by operator", MessageType.Warning);
+                Shared.testRun?.StopTest();
+                btnCancelTest.Enabled = false;
+                lblTestResult.Text = "";
+                mnuNewTest.Text = "New Test";
+                timerElapsed.Stop();
+                Shared.testTimer?.Stop();
+                Shared.testRun.TestUpdate -= TestRun_TestUpdate;
+                Shared.testRun.TestCompleted -= TestRun_TestCompleted;
+                if (Shared.ClimaticChamber is ClimaticChamberSim simStop)
+                    simStop.Update -= ClimaticChamber_Update;
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.LogError("BtnCancelTest_Click", ex);
+            }
+        }
+
+        #endregion
+
         #region Menu Handlers
 
         private void MnuNewTest_Click(object sender, EventArgs e)
@@ -241,6 +274,8 @@ namespace DuplexerFinalTest
                         if (sf.ShowDialog() == System.Windows.Forms.DialogResult.OK)
                         {
                             mnuNewTest.Text = "Cancel Test";
+                            btnCancelTest.Enabled = true;
+                            lblTestResult.Text = "";
                             chartTemperature.Series["ChamberTemperature"].Points.Clear();
                             chartTemperature.Series["DUTTemperature"].Points.Clear();
 
@@ -272,9 +307,10 @@ namespace DuplexerFinalTest
                             if (Shared.ClimaticChamber is ClimaticChamberSim sim)
                                 sim.Update += ClimaticChamber_Update;
 
+                            Shared.logger?.Log($"Test started: {Shared.infoModel.Test?.SequenceName} | Operator: {Shared.infoModel.Operator}");
+                            mnuSaveToDatabase.Visible = false;
+                            mnuSaveToDatabase.Enabled = false;
                             Shared.testRun.StartTest(Shared.infoModel.Test);
-                            Shared.testTimer = new System.Diagnostics.Stopwatch();
-                            Shared.testTimer.Start();
                             timerElapsed.Start();
                         }
                     }
@@ -282,8 +318,10 @@ namespace DuplexerFinalTest
                 else
                 {
                     mnuNewTest.Text = "New Test";
+                    btnCancelTest.Enabled = false;
                     timerElapsed.Stop();
                     Shared.testTimer?.Stop();
+                    Shared.logger?.Log("Test cancelled from menu", MessageType.Warning);
                     Shared.testRun.StopTest();
                     // Unsubscribe
                     Shared.testRun.TestUpdate -= TestRun_TestUpdate;
@@ -294,7 +332,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"New test menu item: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"New test menu item: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -321,7 +359,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Cannot load settings form: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Cannot load settings form: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -329,15 +367,16 @@ namespace DuplexerFinalTest
         {
             try
             {
+                string logDir = Shared.logger?.LogDirectory ?? @"P:\MGunes\DuplexerTestSuite\Logs";
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = Shared.loggingPath,
+                    FileName = logDir,
                     UseShellExecute = true
                 });
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"View log files: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"View log files: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -352,7 +391,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Test procedure: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Test procedure: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -370,7 +409,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Help: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Help: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -409,7 +448,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessage($"Chamber update: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Chamber update: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -431,7 +470,7 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessageThreadSafe($"Test update: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Test update: {ex.Message}", MessageType.Error);
             }
         }
 
@@ -440,6 +479,7 @@ namespace DuplexerFinalTest
             var parts = updateMessage.Split('|');
             var step = parts.Length > 0 ? parts[0].Trim() : updateMessage;
             var status = parts.Length > 1 ? parts[1].Trim() : "";
+            Shared.logger?.Log($"{step}{(string.IsNullOrEmpty(status) ? "" : " | " + status)}");
             var item = lstTestProgress.Items.Add(new System.Windows.Forms.ListViewItem(new string[] { step, status }));
             if (status.Contains("Failed") || status.Contains("FAIL"))
                 lstTestProgress.Items[lstTestProgress.Items.Count - 1].ForeColor = Color.Red;
@@ -457,125 +497,44 @@ namespace DuplexerFinalTest
                 Shared.testTimer?.Stop();
                 timerElapsed.Stop();
 
-                // Evaluate base results
-                var diBase = new DirectoryInfo(Shared.BaseResultsPath);
-                var allBaseResults = diBase.GetFiles().ToList();
-                foreach (var serialNo in Shared.infoModel.Test.BaseDUTs.Select(d => d.SerialNumber))
+                // Compute overall pass/fail from result files before archiving
+                bool overallPassed = true;
+                try
                 {
-                    var results = allBaseResults.Where(a => a.Name.Contains(serialNo)).ToList();
-                    int finalIncrement = 0;
-                    var deviceCode = $"M{serialNo}A";
-                    var passed = !results.Any(r => r.Name.Contains("FAIL"));
-
-                    if (Shared.productionDatabase.IsExistingRecord(deviceCode, out finalIncrement))
-                        Shared.productionDatabase.UpdateExistingRecord(deviceCode, finalIncrement);
-
-                    var testTables = Shared.productionDatabase.GetTestDataTables(
-                        serialNo, Shared.sharedGeneralSettings.GeneralSettings[0].BASE_ITEM_NUMBER,
-                        new List<int>() { 1 }, out int specRevision);
-
-                    var measMainModel = new MeasMainModel()
-                    {
-                        DeviceCode = deviceCode,
-                        SerialNo = serialNo,
-                        TestType = DuplexerTestTypes.A,
-                        Operator = Shared.infoModel.Operator,
-                        TestDate = Shared.infoModel.TestDate,
-                        TestTime = Shared.infoModel.TestTime,
-                        TestRig = "Manual",
-                        SoftwareRev = Shared.SoftwareVersion,
-                        ItemNo = Shared.sharedGeneralSettings.GeneralSettings[0].BASE_ITEM_NUMBER,
-                        ItemNoRev = specRevision,
-                        Passed = passed
-                    };
-                    Shared.productionDatabase.InsertIntoMeasMain(measMainModel);
-
-                    if (testTables != null && testTables.Count > 0)
-                    {
-                        DataTable dtManualTest = testTables[0].Copy();
-                        for (int i = 0; i < dtManualTest.Rows.Count; i++)
-                        {
-                            var testIDStr = dtManualTest.Rows[i].ItemArray[0]?.ToString();
-                            var testID = !string.IsNullOrEmpty(testIDStr) ? int.Parse(testIDStr) : 0;
-                            var testData = ExtractBaseTestResults(testID, results);
-                            Shared.productionDatabase.InsertIntoMeasManualTest(new MeasManualTestModel()
-                            {
-                                DeviceCode = deviceCode,
-                                TestID = testID,
-                                TestData = testData,
-                                Passed = passed
-                            });
-                        }
-                    }
-                    foreach (var result in results)
-                    {
-                        File.Move(result.FullName,
-                            Path.Combine(Shared.BaseResultsPath, "Archive", result.Name));
-                    }
+                    if (Directory.Exists(Shared.BaseResultsPath))
+                        overallPassed &= !Directory.GetFiles(Shared.BaseResultsPath)
+                            .Any(f => Path.GetFileName(f).Contains("FAIL"));
+                    if (Directory.Exists(Shared.RemoteResultsPath))
+                        overallPassed &= !Directory.GetFiles(Shared.RemoteResultsPath)
+                            .Any(f => Path.GetFileName(f).Contains("FAIL"));
                 }
+                catch { }
 
-                // Evaluate remote results
-                var diRemote = new DirectoryInfo(Shared.RemoteResultsPath);
-                var allRemoteResults = diRemote.GetFiles().ToList();
-                foreach (var serialNo in Shared.infoModel.Test.RemoteDUTs.Select(d => d.SerialNumber))
+                bool autoSave = Shared.sharedGeneralSettings?.GeneralSettings[0]
+                    .SAVE_RESULTS_TO_DB_AUTO?.Trim().ToLower() == "true";
+
+                if (autoSave)
                 {
-                    var results = allRemoteResults.Where(a => a.Name.Contains(serialNo)).ToList();
-                    int finalIncrement = 0;
-                    var deviceCode = $"M{serialNo}A";
-                    var passed = !results.Any(r => r.Name.Contains("FAIL"));
-
-                    if (Shared.productionDatabase.IsExistingRecord(deviceCode, out finalIncrement))
-                        Shared.productionDatabase.UpdateExistingRecord(deviceCode, finalIncrement);
-
-                    var testTables = Shared.productionDatabase.GetTestDataTables(
-                        serialNo, Shared.sharedGeneralSettings.GeneralSettings[0].REMOTE_ITEM_NUMBER,
-                        new List<int>() { 1 }, out int specRevision);
-
-                    var measMainModel = new MeasMainModel()
-                    {
-                        DeviceCode = deviceCode,
-                        SerialNo = serialNo,
-                        TestType = DuplexerTestTypes.A,
-                        Operator = Shared.infoModel.Operator,
-                        TestDate = Shared.infoModel.TestDate,
-                        TestTime = Shared.infoModel.TestTime,
-                        TestRig = "Manual",
-                        SoftwareRev = Shared.SoftwareVersion,
-                        ItemNo = Shared.sharedGeneralSettings.GeneralSettings[0].REMOTE_ITEM_NUMBER,
-                        ItemNoRev = specRevision,
-                        Passed = passed
-                    };
-                    Shared.productionDatabase.InsertIntoMeasMain(measMainModel);
-
-                    if (testTables != null && testTables.Count > 0)
-                    {
-                        DataTable dtManualTest = testTables[0].Copy();
-                        for (int i = 0; i < dtManualTest.Rows.Count; i++)
-                        {
-                            var testIDStr = dtManualTest.Rows[i].ItemArray[0]?.ToString();
-                            var testID = !string.IsNullOrEmpty(testIDStr) ? int.Parse(testIDStr) : 0;
-                            var testData = ExtractRemoteTestResults(testID, results);
-                            Shared.productionDatabase.InsertIntoMeasManualTest(new MeasManualTestModel()
-                            {
-                                DeviceCode = deviceCode,
-                                TestID = testID,
-                                TestData = testData,
-                                Passed = passed
-                            });
-                        }
-                    }
-                    foreach (var result in results)
-                    {
-                        File.Move(result.FullName,
-                            Path.Combine(Shared.RemoteResultsPath, "Archive", result.Name));
-                    }
+                    SaveResultsToDatabase();
+                    Shared.logger?.Log("Results saved to database automatically", MessageType.Success);
+                }
+                else
+                {
+                    Shared.logger?.Log("Auto-save is OFF — use 'Save to Database' menu item to save results", MessageType.Warning);
                 }
 
                 if (InvokeRequired)
                     BeginInvoke((System.Windows.Forms.MethodInvoker)delegate
                     {
                         prgTestProgress.Value = 100;
+                        ShowTestResult(overallPassed);
+                        btnCancelTest.Enabled = false;
                         mnuNewTest.Text = "New Test";
+                        if (!autoSave)
+                        {
+                            mnuSaveToDatabase.Visible = true;
+                            mnuSaveToDatabase.Enabled = true;
+                        }
                         Shared.testRun.TestUpdate -= TestRun_TestUpdate;
                         Shared.testRun.TestCompleted -= TestRun_TestCompleted;
                         if (Shared.ClimaticChamber is ClimaticChamberSim sim)
@@ -584,7 +543,14 @@ namespace DuplexerFinalTest
                 else
                 {
                     prgTestProgress.Value = 100;
+                    ShowTestResult(overallPassed);
+                    btnCancelTest.Enabled = false;
                     mnuNewTest.Text = "New Test";
+                    if (!autoSave)
+                    {
+                        mnuSaveToDatabase.Visible = true;
+                        mnuSaveToDatabase.Enabled = true;
+                    }
                     Shared.testRun.TestUpdate -= TestRun_TestUpdate;
                     Shared.testRun.TestCompleted -= TestRun_TestCompleted;
                     if (Shared.ClimaticChamber is ClimaticChamberSim sim)
@@ -593,13 +559,180 @@ namespace DuplexerFinalTest
             }
             catch (Exception ex)
             {
-                Shared.messageViewer?.AddNewMessageThreadSafe($"Test completed: {ex.Message}", MessageType.Error);
+                Shared.logger?.Log($"Test completed handler: {ex.Message}", MessageType.Error);
+            }
+        }
+
+        private void ShowTestResult(bool passed)
+        {
+            if (passed)
+            {
+                lblTestResult.Text = "\u2714  PASS";
+                lblTestResult.ForeColor = Color.Green;
+            }
+            else
+            {
+                lblTestResult.Text = "\u2718  FAIL";
+                lblTestResult.ForeColor = Color.Red;
+            }
+        }
+
+        private void SaveResultsToDatabase()
+        {
+            // ── Base DUTs ──────────────────────────────────────────────────────
+            if (Shared.infoModel.Test.BaseDUTs?.Count > 0)
+            {
+                var diBase = new DirectoryInfo(Shared.BaseResultsPath);
+                var allBaseResults = diBase.GetFiles().ToList();
+                foreach (var serialNo in Shared.infoModel.Test.BaseDUTs.Select(d => d.SerialNumber))
+                {
+                    var results = allBaseResults.Where(a => a.Name.Contains(serialNo)).ToList();
+                    var passed = !results.Any(r => r.Name.Contains("FAIL"));
+
+                    var measMainModel = new MeasMainModel()
+                    {
+                        SerialNo = serialNo,
+                        TestType = DuplexerTestTypes.A,
+                        Operator = Shared.infoModel.Operator,
+                        TestDate = Shared.infoModel.TestDate,
+                        TestTime = Shared.infoModel.TestTime,
+                        TestRig = Environment.MachineName,
+                        SoftwareRev = Shared.SoftwareVersion,
+                        ItemNo = Shared.sharedGeneralSettings.GeneralSettings[0].BASE_ITEM_NUMBER,
+                        ItemNoRev = 0,
+                        Passed = passed
+                    };
+
+                    var manualTestModels = new System.Collections.Generic.List<MeasManualTestModel>();
+                    Shared.logger?.Log($"Base specs for {serialNo}: {Shared.testSpecsBase?.Count ?? 0} specs, {results.Count} result files");
+                    if (Shared.testSpecsBase != null)
+                    {
+                        foreach (var spec in Shared.testSpecsBase)
+                        {
+                            try
+                            {
+                                double testData = ExtractBaseTestResults(spec.TestID, results);
+                                bool rowPassed = EvaluateLimit(testData, spec.LimitMin, spec.LimitMax);
+                                Shared.logger?.Log($"  Base TestID={spec.TestID} value={testData:G6} pass={rowPassed} [{spec.LimitMin}..{spec.LimitMax}]");
+                                manualTestModels.Add(new MeasManualTestModel()
+                                {
+                                    TestID = spec.TestID,
+                                    TestData = testData,
+                                    Passed = rowPassed
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                Shared.logger?.Log($"ExtractBaseTestResults TestID={spec.TestID}: {ex.Message}", MessageType.Warning);
+                            }
+                        }
+                    }
+
+                    Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels);
+
+                    // Archive result files for this serial
+                    Directory.CreateDirectory(Path.Combine(Shared.BaseResultsPath, "Archive"));
+                    foreach (var result in results)
+                        File.Move(result.FullName, Path.Combine(Shared.BaseResultsPath, "Archive", result.Name), true);
+                }
+            }
+
+            // ── Remote DUTs ────────────────────────────────────────────────────
+            if (Shared.infoModel.Test.RemoteDUTs?.Count > 0)
+            {
+                var diRemote = new DirectoryInfo(Shared.RemoteResultsPath);
+                var allRemoteResults = diRemote.GetFiles().ToList();
+                foreach (var serialNo in Shared.infoModel.Test.RemoteDUTs.Select(d => d.SerialNumber))
+                {
+                    var results = allRemoteResults.Where(a => a.Name.Contains(serialNo)).ToList();
+                    var passed = !results.Any(r => r.Name.Contains("FAIL"));
+
+                    var measMainModel = new MeasMainModel()
+                    {
+                        SerialNo = serialNo,
+                        TestType = DuplexerTestTypes.A,
+                        Operator = Shared.infoModel.Operator,
+                        TestDate = Shared.infoModel.TestDate,
+                        TestTime = Shared.infoModel.TestTime,
+                        TestRig = Environment.MachineName,
+                        SoftwareRev = Shared.SoftwareVersion,
+                        ItemNo = Shared.sharedGeneralSettings.GeneralSettings[0].REMOTE_ITEM_NUMBER,
+                        ItemNoRev = 0,
+                        Passed = passed
+                    };
+
+                    var manualTestModels = new System.Collections.Generic.List<MeasManualTestModel>();
+                    Shared.logger?.Log($"Remote specs for {serialNo}: {Shared.testSpecsRemote?.Count ?? 0} specs, {results.Count} result files");
+                    if (Shared.testSpecsRemote != null)
+                    {
+                        foreach (var spec in Shared.testSpecsRemote)
+                        {
+                            try
+                            {
+                                double testData = ExtractRemoteTestResults(spec.TestID, results);
+                                bool rowPassed = EvaluateLimit(testData, spec.LimitMin, spec.LimitMax);
+                                Shared.logger?.Log($"  Remote TestID={spec.TestID} value={testData:G6} pass={rowPassed} [{spec.LimitMin}..{spec.LimitMax}]");
+                                manualTestModels.Add(new MeasManualTestModel()
+                                {
+                                    TestID = spec.TestID,
+                                    TestData = testData,
+                                    Passed = rowPassed
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                Shared.logger?.Log($"ExtractRemoteTestResults TestID={spec.TestID}: {ex.Message}", MessageType.Warning);
+                            }
+                        }
+                    }
+
+                    Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels);
+
+                    // Archive result files for this serial
+                    Directory.CreateDirectory(Path.Combine(Shared.RemoteResultsPath, "Archive"));
+                    foreach (var result in results)
+                        File.Move(result.FullName, Path.Combine(Shared.RemoteResultsPath, "Archive", result.Name), true);
+                }
+            }
+        }
+
+        private void MnuSaveToDatabase_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                mnuSaveToDatabase.Enabled = false;
+                SaveResultsToDatabase();
+                Shared.logger?.Log("Results saved to database manually", MessageType.Success);
+                mnuSaveToDatabase.Visible = false;
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.Log($"Manual DB save failed: {ex.Message}", MessageType.Error);
+                mnuSaveToDatabase.Enabled = true;
             }
         }
 
         #endregion
 
         #region Result Extraction
+
+        /// <summary>
+        /// Evaluates pass/fail against limits, matching the reference project logic:
+        ///   min!=0 &amp;&amp; max!=0 → value must be between min and max
+        ///   min==0 &amp;&amp; max!=0 → value must be &lt;= max (no lower bound)
+        ///   min!=0 &amp;&amp; max==0 → value must be &gt;= min (no upper bound)
+        ///   min==0 &amp;&amp; max==0 → no validation, always pass
+        /// </summary>
+        private static bool EvaluateLimit(double value, double limitMin, double limitMax)
+        {
+            if (limitMin != 0 && limitMax != 0)
+                return value >= limitMin && value <= limitMax;
+            if (limitMin == 0 && limitMax != 0)
+                return value >= 0 && value <= limitMax;
+            if (limitMin != 0 && limitMax == 0)
+                return value >= limitMin;
+            return true; // both 0 → no validation
+        }
 
         private double ExtractBaseTestResults(int testID, List<System.IO.FileInfo> resultFiles)
         {

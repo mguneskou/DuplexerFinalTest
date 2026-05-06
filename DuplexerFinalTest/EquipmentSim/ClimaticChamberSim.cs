@@ -67,6 +67,15 @@ namespace DuplexerFinalTest.EquipmentSim
 
         public bool SetMode(ChamberModes mode) { return true; }
 
+        // Simulator: just store the protection limits in the temperature model so the
+        // Safety limit check and the displayed values see the configured range.
+        public bool SetTemperatureProtection(double highLimit, double lowLimit)
+        {
+            currentTemperature.HigherLimitTemperature = highLimit;
+            currentTemperature.LowerLimitTemperature  = lowLimit;
+            return true;
+        }
+
         public bool IsReady(double targetTemperature, double tolerance)
         {
             return Math.Abs(currentTemperature.MeasuredTemperature - targetTemperature) <= tolerance;

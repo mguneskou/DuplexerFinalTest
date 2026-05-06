@@ -71,12 +71,21 @@ namespace DuplexerFinalTest.Equipment
         {
             try
             {
-                _visa.Write($"CONF:TEMP THER,10000,1,0.1,(@{channel})");
-                Thread.Sleep(50);
+                // Configure the measurement type for this channel
+                if (mode == TemperatureMeasureMode.ThermoCouple)
+                    _visa.Write($"CONF:TEMP TC,K,(@{channel})");
+                else
+                    _visa.Write($"CONF:TEMP THER,5000,(@{channel})"); // 5 kΩ thermistor
+
+                // Set scan list and trigger source, then initiate
                 _visa.Write($"ROUT:SCAN (@{channel})");
-                Thread.Sleep(50);
+                _visa.Write("TRIG:SOUR IMM");
+                _visa.Write("TRIG:COUN 1");
                 _visa.Write("INIT");
-                Thread.Sleep(1000);
+
+                // Allow time for the scan to complete (typical 34972A conversion ~1 s)
+                Thread.Sleep(1500);
+
                 string result = _visa.Query("FETC?").Trim();
                 if (double.TryParse(result, System.Globalization.NumberStyles.Any,
                     System.Globalization.CultureInfo.InvariantCulture, out double temp))

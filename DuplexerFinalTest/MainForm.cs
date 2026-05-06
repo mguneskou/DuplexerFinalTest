@@ -250,6 +250,7 @@ namespace DuplexerFinalTest
                 Shared.testTimer?.Stop();
                 Shared.testRun.TestUpdate -= TestRun_TestUpdate;
                 Shared.testRun.TestCompleted -= TestRun_TestCompleted;
+                Shared.testRun.TestTemperatureUpdate -= ClimaticChamber_Update;
                 if (Shared.ClimaticChamber is ClimaticChamberSim simStop)
                     simStop.Update -= ClimaticChamber_Update;
             }
@@ -302,8 +303,9 @@ namespace DuplexerFinalTest
                             // Subscribe events
                             Shared.testRun.TestUpdate += TestRun_TestUpdate;
                             Shared.testRun.TestCompleted += TestRun_TestCompleted;
+                            Shared.testRun.TestTemperatureUpdate += ClimaticChamber_Update;
 
-                            // Subscribe climatic chamber update for chart
+                            // Subscribe climatic chamber update for chart (simulator only)
                             if (Shared.ClimaticChamber is ClimaticChamberSim sim)
                                 sim.Update += ClimaticChamber_Update;
 
@@ -326,6 +328,7 @@ namespace DuplexerFinalTest
                     // Unsubscribe
                     Shared.testRun.TestUpdate -= TestRun_TestUpdate;
                     Shared.testRun.TestCompleted -= TestRun_TestCompleted;
+                    Shared.testRun.TestTemperatureUpdate -= ClimaticChamber_Update;
                     if (Shared.ClimaticChamber is ClimaticChamberSim simStop)
                         simStop.Update -= ClimaticChamber_Update;
                 }
@@ -537,6 +540,7 @@ namespace DuplexerFinalTest
                         }
                         Shared.testRun.TestUpdate -= TestRun_TestUpdate;
                         Shared.testRun.TestCompleted -= TestRun_TestCompleted;
+                        Shared.testRun.TestTemperatureUpdate -= ClimaticChamber_Update;
                         if (Shared.ClimaticChamber is ClimaticChamberSim sim)
                             sim.Update -= ClimaticChamber_Update;
                     });
@@ -553,6 +557,7 @@ namespace DuplexerFinalTest
                     }
                     Shared.testRun.TestUpdate -= TestRun_TestUpdate;
                     Shared.testRun.TestCompleted -= TestRun_TestCompleted;
+                    Shared.testRun.TestTemperatureUpdate -= ClimaticChamber_Update;
                     if (Shared.ClimaticChamber is ClimaticChamberSim sim)
                         sim.Update -= ClimaticChamber_Update;
                 }

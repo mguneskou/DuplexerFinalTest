@@ -148,6 +148,7 @@ namespace DuplexerFinalTest.Helpers
                     SetPanel(pnlSMUSlave, SMU_slave.Connect("SIM"));
                     int.TryParse(s.CLIMATIC_CHAMBER_PORT, out int port);
                     SetPanel(pnlChamber, ClimaticChamber.Connect(s.CLIMATIC_CHAMBER_IP_ADDRESS ?? "127.0.0.1", port > 0 ? port : 5000));
+                    ApplyChamberProtectionLimits(s);
                 }
                 else
                 {
@@ -164,6 +165,7 @@ namespace DuplexerFinalTest.Helpers
                     SetPanel(pnlSMUSlave, SMU_slave.Connect(s.SMU_SLAVE_RESOURCE));
                     int.TryParse(s.CLIMATIC_CHAMBER_PORT, out int chamberPort);
                     SetPanel(pnlChamber, ClimaticChamber.Connect(s.CLIMATIC_CHAMBER_IP_ADDRESS, chamberPort > 0 ? chamberPort : 5000));
+                    ApplyChamberProtectionLimits(s);
                 }
 
                 // DB connection panel
@@ -196,6 +198,39 @@ namespace DuplexerFinalTest.Helpers
         {
             string json = File.ReadAllText(fileName);
             return JsonConvert.DeserializeObject<TestSequenceModel>(json);
+        }
+
+        // Reads CHAMBER_SAFE_MAX/MIN_TEMP and CHAMBER_HWPROT_MARGIN_C from settings,
+        // then programs the chamber controller's firmware temperature protection limits
+        // via SetTemperatureProtection(high, low).  Called once right after Connect.
+        // Hardware high = safeMax + margin,  hardware low = safeMin - margin.
+        private static void ApplyChamberProtectionLimits(Models.GeneralSetting s)
+        {
+            if (ClimaticChamber == null || !ClimaticChamber.IsConnected) return;
+            try
+            {
+                double safeMax = 100.0;
+                double safeMin = -70.0;
+                double margin  = 5.0;
+                if (double.TryParse(s.CHAMBER_SAFE_MAX_TEMP, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double parsedMax)) safeMax = parsedMax;
+                if (double.TryParse(s.CHAMBER_SAFE_MIN_TEMP, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double parsedMin)) safeMin = parsedMin;
+                if (double.TryParse(s.CHAMBER_HWPROT_MARGIN_C, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double parsedMargin)) margin = parsedMargin;
+
+                double hwHigh = safeMax + margin;
+                double hwLow  = safeMin - margin;
+                ClimaticChamber.SetTemperatureProtection(hwHigh, hwLow);
+                logger?.Log(
+                    $"Chamber HW protection limits set: High={hwHigh:F1}\u00b0C, Low={hwLow:F1}\u00b0C " +
+                    $"(software safety: [{safeMin:F1}, {safeMax:F1}]\u00b0C, margin: \u00b1{margin:F1}\u00b0C)",
+                    MessageType.Message);
+            }
+            catch (Exception ex)
+            {
+                logger?.Log($"Chamber HW protection limits: failed to set \u2014 {ex.Message}", MessageType.Warning);
+            }
         }
 
         public static int GetThermistorChannel(DUTType dutType, int slot)

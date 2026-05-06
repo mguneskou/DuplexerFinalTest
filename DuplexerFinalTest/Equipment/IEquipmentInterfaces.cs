@@ -57,6 +57,10 @@ namespace DuplexerFinalTest.Equipment
         bool ProgramContinue();
         bool ProgramAdvance();
         bool ProgramEnd(ChamberProgramEndConditions endCondition);
+        // Programs the chamber controller's own firmware protection limits (TEMP,H / TEMP,L).
+        // These mirror the front-panel "Temperature Protection" settings and are applied once
+        // on connect so they always match the software safety limits plus a configured margin.
+        bool SetTemperatureProtection(double highLimit, double lowLimit);
         Models.ChamberTemperatureModel currentTemperature { get; set; }
     }
 }

@@ -20,6 +20,9 @@ namespace DuplexerFinalTest.Models
             dt.Rows.Add("Plot Update in Minutes", s.PLOT_UPDATE_IN_MINUTES);
             dt.Rows.Add("Climatic Chamber IP Address", s.CLIMATIC_CHAMBER_IP_ADDRESS);
             dt.Rows.Add("Climatic Chamber Port", s.CLIMATIC_CHAMBER_PORT);
+            dt.Rows.Add("Chamber Safe Max Temp (°C)", s.CHAMBER_SAFE_MAX_TEMP);
+            dt.Rows.Add("Chamber Safe Min Temp (°C)", s.CHAMBER_SAFE_MIN_TEMP);
+            dt.Rows.Add("Chamber HW Prot Margin (°C)", s.CHAMBER_HWPROT_MARGIN_C);
             dt.Rows.Add("Electrical Switch #1", s.ELECTRICAL_SWITCH1_RESOURCE);
             dt.Rows.Add("Electrical Switch #2", s.ELECTRICAL_SWITCH2_RESOURCE);
             dt.Rows.Add("Electrical Switch #3", s.ELECTRICAL_SWITCH3_RESOURCE);
@@ -63,6 +66,16 @@ namespace DuplexerFinalTest.Models
         public string SMU_SLAVE_RESOURCE { get; set; }
         public string CLIMATIC_CHAMBER_IP_ADDRESS { get; set; }
         public string CLIMATIC_CHAMBER_PORT { get; set; }
+        // Absolute temperature safety limits monitored in software during all chamber polling loops.
+        // If the measured chamber temperature goes outside this range, STANDBY is commanded immediately.
+        // Defaults if missing from JSON: +100 °C max, -70 °C min.
+        public string CHAMBER_SAFE_MAX_TEMP { get; set; }
+        public string CHAMBER_SAFE_MIN_TEMP { get; set; }
+        // Additional margin (°C) applied beyond the software safety limits when programming
+        // the chamber's own hardware protection limits via TEMP,H / TEMP,L on connect.
+        // Hardware limit = SAFE_MAX + margin (high) / SAFE_MIN - margin (low).
+        // Default if missing from JSON: 5 °C.
+        public string CHAMBER_HWPROT_MARGIN_C { get; set; }
         public string RESULTS_FOLDER { get; set; }
         public string RESOURCES_FOLDER { get; set; }
         public string USE_SIMULATORS { get; set; }

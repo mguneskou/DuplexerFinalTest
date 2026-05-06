@@ -11,6 +11,7 @@ namespace DuplexerFinalTest.Tests
 {
     public delegate void TestCompletedDelegate();
     public delegate void TestUpdatedDelegate(string updateMessage, int progressPercentage);
+    public delegate void TestTemperatureUpdatedDelegate(ChamberTemperatureModel chamberTemp, double avgDUTTemp);
 
     public class TestRun
     {
@@ -22,10 +23,12 @@ namespace DuplexerFinalTest.Tests
 
         public event TestCompletedDelegate TestCompleted;
         public event TestUpdatedDelegate TestUpdate;
+        public event TestTemperatureUpdatedDelegate TestTemperatureUpdate;
         public TestSequenceModel sequence;
 
         private TestResultModel _testResults;
         private double _plotUpdateInterval_sec = 0;
+        private DateTime _lastPlotUpdate = DateTime.MinValue;
 
         public TestRun()
         {
@@ -73,6 +76,7 @@ namespace DuplexerFinalTest.Tests
             Shared.testTimer = new System.Diagnostics.Stopwatch();
             Shared.testTimer.Start();
 
+            _lastPlotUpdate = DateTime.MinValue; // ensures first temperature update fires immediately
             _testWorker.RunWorkerAsync(test);
         }
 
@@ -120,26 +124,67 @@ namespace DuplexerFinalTest.Tests
 
                         var step = sequence.ChamberManualRun.ChamberRunSteps[i];
                         var action = (ChamberManualRunActions)Enum.Parse(typeof(ChamberManualRunActions), step.Action, true);
-                        double tempTolerance = step.GoTemperature == 0
-                            ? 1.5
-                            : Math.Abs(step.TemperatureTolerenceInPercent * step.GoTemperature / 100.0);
+
+                        // TemperatureTolerenceInPercent is used as absolute ±°C.
+                        // Percentage units make no physical sense for temperature (breaks at 0 °C,
+                        // and gives inconsistent bands at hot/cold extremes).
+                        // Existing JSON values of "5" become ±5 °C — tune per product requirement.
+                        double tempTolerance = step.TemperatureTolerenceInPercent > 0
+                            ? step.TemperatureTolerenceInPercent
+                            : 2.0;   // 2 °C fallback if field is 0 or missing
 
                         // Command the chamber
                         Shared.ClimaticChamber.RunRemoteProgram(step.StartTemperature, step.GoTemperature, step.RampDwellMinutes);
-                        Shared.logger?.Log($"Step {step.StepNo} [{action}]: {step.StartTemperature}°C→{step.GoTemperature}°C | RampDwell={step.RampDwellMinutes}min DelayBefore={step.DelayBeforeSweepsMinutes}min DelayAfter={step.DelayAfterSweepsMinutes}min");
+                        Shared.logger?.Log($"Step {step.StepNo} [{action}]: {step.StartTemperature}°C→{step.GoTemperature}°C | Tolerance=±{tempTolerance:F1}°C RampDwell={step.RampDwellMinutes}min DelayBefore={step.DelayBeforeSweepsMinutes}min DelayAfter={step.DelayAfterSweepsMinutes}min");
                         if (!step.HumidityOff) Shared.ClimaticChamber.SetHumidity(step.GoHumidity);
 
                         if (action == ChamberManualRunActions.RAMP)
                         {
-                            bgw.ReportProgress(i, $"Step {step.StepNo}: RAMP: {step.StartTemperature}°C → {step.GoTemperature}°C | {TimeSpan.FromMinutes(step.RampDwellMinutes):hh\\:mm\\:ss}");
-                            // Wait until chamber reaches target
+                            bgw.ReportProgress(i, $"Step {step.StepNo}: RAMP: {step.StartTemperature}°C → {step.GoTemperature}°C  (±{tempTolerance:F1}°C, 5 stable readings required)");
+
+                            // RAMP completion requires 5 consecutive readings within tolerance
+                            // (5 × 500 ms = 2.5 s of stability) to avoid declaring success on a
+                            // transient reading while the chamber is still moving through the target.
+                            const int requiredConsecutive = 5;
+                            int consecutiveOk = 0;
+                            double measuredTemp = double.NaN;
+
+                            // 120-minute hard ceiling — if the chamber hasn't arrived by then,
+                            // throw EquipmentCommunicationException so the operator is prompted
+                            // via the existing retry countdown dialog.
+                            const long rampTimeoutMs = 120L * 60 * 1000;
                             long rampStart = Shared.testTimer.ElapsedMilliseconds;
+
                             do
                             {
                                 if (bgw.CancellationPending) { e.Cancel = true; return; }
                                 Thread.Sleep(500);
-                            } while (!Shared.ClimaticChamber.IsReady(step.GoTemperature, tempTolerance));
-                            Shared.logger?.Log($"Step {step.StepNo}: RAMP complete in {Shared.testTimer.ElapsedMilliseconds - rampStart}ms | Temp={Shared.ClimaticChamber.GetTemperature()?.MeasuredTemperature:0.0}°C");
+
+                                // Single GetTemperature call per iteration — reused for safety
+                                // check, stability check, and chart update to avoid redundant
+                                // TCP round-trips to the chamber.
+                                var currentTemp = Shared.ClimaticChamber.GetTemperature();
+                                measuredTemp = currentTemp?.MeasuredTemperature ?? double.NaN;
+
+                                CheckChamberSafetyLimits(measuredTemp);
+                                FireTemperatureUpdateIfDue(currentTemp);
+
+                                if (Shared.testTimer.ElapsedMilliseconds - rampStart > rampTimeoutMs)
+                                    throw new EquipmentCommunicationException(
+                                        $"Chamber RAMP timeout (120 min): step {step.StepNo} target {step.GoTemperature:F1}°C not reached. " +
+                                        $"Last reading: {measuredTemp:F1}°C");
+
+                                if (!double.IsNaN(measuredTemp) && Math.Abs(measuredTemp - step.GoTemperature) <= tempTolerance)
+                                    consecutiveOk++;
+                                else
+                                    consecutiveOk = 0;
+
+                                if (consecutiveOk > 0 && consecutiveOk < requiredConsecutive)
+                                    bgw.ReportProgress(i, $"Step {step.StepNo}: RAMP — within tolerance ({consecutiveOk}/{requiredConsecutive})");
+
+                            } while (consecutiveOk < requiredConsecutive);
+
+                            Shared.logger?.Log($"Step {step.StepNo}: RAMP complete in {Shared.testTimer.ElapsedMilliseconds - rampStart}ms | Temp={measuredTemp:0.0}°C");
                         }
                         else // SOAK
                         {
@@ -155,6 +200,9 @@ namespace DuplexerFinalTest.Tests
                             {
                                 if (bgw.CancellationPending) { e.Cancel = true; return; }
                                 Thread.Sleep(500);
+                                var currentTemp = Shared.ClimaticChamber.GetTemperature();
+                                CheckChamberSafetyLimits(currentTemp?.MeasuredTemperature ?? double.NaN);
+                                FireTemperatureUpdateIfDue(currentTemp);
                             } while (Shared.testTimer.ElapsedMilliseconds < preDelay + preDelayMs);
                             Shared.logger?.Log($"Step {step.StepNo}: pre-delay done (actual {Shared.testTimer.ElapsedMilliseconds - preDelay}ms)");
 
@@ -182,6 +230,9 @@ namespace DuplexerFinalTest.Tests
                             {
                                 if (bgw.CancellationPending) { e.Cancel = true; return; }
                                 Thread.Sleep(500);
+                                var currentTemp = Shared.ClimaticChamber.GetTemperature();
+                                CheckChamberSafetyLimits(currentTemp?.MeasuredTemperature ?? double.NaN);
+                                FireTemperatureUpdateIfDue(currentTemp);
                             } while (Shared.testTimer.ElapsedMilliseconds < postDelay + postDelayMs);
                             Shared.logger?.Log($"Step {step.StepNo}: post-delay done (actual {Shared.testTimer.ElapsedMilliseconds - postDelay}ms)");
                         }
@@ -285,6 +336,66 @@ namespace DuplexerFinalTest.Tests
             return result;
         }
 
+        private void FireTemperatureUpdateIfDue(ChamberTemperatureModel chamberTemp = null)
+        {
+            if (_plotUpdateInterval_sec > 0 && (DateTime.UtcNow - _lastPlotUpdate).TotalSeconds < _plotUpdateInterval_sec)
+                return;
+            _lastPlotUpdate = DateTime.UtcNow;
+            try
+            {
+                if (chamberTemp == null)
+                    chamberTemp = Shared.ClimaticChamber.GetTemperature();
+                double total = 0;
+                int count = 0;
+                if (sequence?.BaseDUTs != null)
+                    foreach (var dut in sequence.BaseDUTs)
+                    {
+                        try { total += dut.ReadThermistor; count++; } catch { }
+                    }
+                if (sequence?.RemoteDUTs != null)
+                    foreach (var dut in sequence.RemoteDUTs)
+                    {
+                        try { total += dut.ReadThermistor; count++; } catch { }
+                    }
+                double avgDUTTemp = count > 0 ? total / count : 0;
+                TestTemperatureUpdate?.Invoke(chamberTemp, avgDUTTemp);
+            }
+            catch { }
+        }
+
+        // Checks the measured chamber temperature against the configured safety limits.
+        // If outside the envelope: commands STANDBY immediately, logs the event, and throws
+        // EquipmentCommunicationException — which routes to the operator retry/countdown dialog.
+        private void CheckChamberSafetyLimits(double measuredTemperature)
+        {
+            if (double.IsNaN(measuredTemperature)) return;  // unreadable — skip, do not false-alarm
+
+            var s = Shared.sharedGeneralSettings?.GeneralSettings?[0];
+            double safeMax = 100.0;   // default: +100 °C
+            double safeMin = -70.0;   // default: -70 °C
+            if (s != null)
+            {
+                if (double.TryParse(s.CHAMBER_SAFE_MAX_TEMP, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double parsedMax))
+                    safeMax = parsedMax;
+                if (double.TryParse(s.CHAMBER_SAFE_MIN_TEMP, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double parsedMin))
+                    safeMin = parsedMin;
+            }
+
+            if (measuredTemperature > safeMax || measuredTemperature < safeMin)
+            {
+                try { Shared.ClimaticChamber?.SetMode(ChamberModes.STANDBY); } catch { }
+                Shared.logger?.Log(
+                    $"SAFETY LIMIT: chamber {measuredTemperature:F1}°C outside [{safeMin:F1}, {safeMax:F1}]°C — STANDBY commanded",
+                    MessageType.Error);
+                throw new EquipmentCommunicationException(
+                    $"SAFETY LIMIT EXCEEDED: Chamber temperature {measuredTemperature:F1}°C is outside the " +
+                    $"configured safe range [{safeMin:F1}°C to {safeMax:F1}°C]. " +
+                    "Chamber set to STANDBY. Verify CHAMBER_SAFE_MAX_TEMP / CHAMBER_SAFE_MIN_TEMP in Settings.");
+            }
+        }
+
         private void TestWorker_ProgressChanged(object sender, ProgressChangedEventArgs e)
         {
             try
@@ -300,13 +411,14 @@ namespace DuplexerFinalTest.Tests
         {
             try
             {
-                _testWorker.DoWork -= TestWorker_DoWork;
-                _testWorker.ProgressChanged -= TestWorker_ProgressChanged;
-                _testWorker.RunWorkerCompleted -= TestWorker_RunWorkerCompleted;
+                // Do NOT unsubscribe the BackgroundWorker handlers here — they must persist
+                // so that subsequent test runs (New Test → StartTest again) work correctly.
 
                 // Stop chamber
                 if (Shared.ClimaticChamber is EquipmentSim.ClimaticChamberSim sim)
                     sim.Power(false);
+                else
+                    try { Shared.ClimaticChamber?.SetMode(ChamberModes.STANDBY); } catch { }
 
                 Shared.testTimer?.Stop();
 

@@ -25,6 +25,9 @@ namespace DuplexerFinalTest
         private const int ROW_SMU_SLAVE   = 11;
         private const int ROW_CHAMBER_IP  = 12;
         private const int ROW_CHAMBER_PORT = 13;
+        private const int ROW_CHAMBER_SAFE_MAX = 14;
+        private const int ROW_CHAMBER_SAFE_MIN = 15;
+        private const int ROW_CHAMBER_HWPROT_MARGIN = 16;
 
         public SettingsForm()
         {
@@ -83,6 +86,9 @@ namespace DuplexerFinalTest
             dgvEquipment.Rows.Add("SMU - Slave",              s.SMU_SLAVE_RESOURCE);
             dgvEquipment.Rows.Add("Climatic Chamber IP",      s.CLIMATIC_CHAMBER_IP_ADDRESS);
             dgvEquipment.Rows.Add("Climatic Chamber Port",    s.CLIMATIC_CHAMBER_PORT);
+            dgvEquipment.Rows.Add("Chamber Safe Max Temp (\u00b0C)", s.CHAMBER_SAFE_MAX_TEMP ?? "100");
+            dgvEquipment.Rows.Add("Chamber Safe Min Temp (\u00b0C)", s.CHAMBER_SAFE_MIN_TEMP ?? "-70");
+            dgvEquipment.Rows.Add("Chamber HW Prot Margin (\u00b0C)", s.CHAMBER_HWPROT_MARGIN_C ?? "5");
         }
 
         private void BtnSave_Click(object sender, EventArgs e)
@@ -114,6 +120,9 @@ namespace DuplexerFinalTest
                     SMU_SLAVE_RESOURCE               = CellValue(ROW_SMU_SLAVE),
                     CLIMATIC_CHAMBER_IP_ADDRESS      = CellValue(ROW_CHAMBER_IP),
                     CLIMATIC_CHAMBER_PORT            = CellValue(ROW_CHAMBER_PORT),
+                    CHAMBER_SAFE_MAX_TEMP            = CellValue(ROW_CHAMBER_SAFE_MAX),
+                    CHAMBER_SAFE_MIN_TEMP            = CellValue(ROW_CHAMBER_SAFE_MIN),
+                    CHAMBER_HWPROT_MARGIN_C          = CellValue(ROW_CHAMBER_HWPROT_MARGIN),
                     RESULTS_FOLDER                   = txtResultsFolder.Text.Trim(),
                     RESOURCES_FOLDER                 = txtResourcesFolder.Text.Trim(),
                     USE_SIMULATORS                   = BoolStr(chkUseSimulators.Checked),

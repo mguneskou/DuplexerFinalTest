@@ -154,7 +154,10 @@ namespace DuplexerFinalTest.Helpers
                             {
                                 cmd.Parameters.AddWithValue("@dc", baseCode);
                                 cmd.Parameters.AddWithValue("@tid", mt.TestID);
-                                cmd.Parameters.AddWithValue("@td", mt.TestData);
+                                cmd.Parameters.AddWithValue("@td",
+                                    (double.IsNaN(mt.TestData) || double.IsInfinity(mt.TestData))
+                                        ? (object)DBNull.Value
+                                        : mt.TestData);
                                 cmd.Parameters.AddWithValue("@pass", mt.Passed ? 1 : 0);
                                 cmd.ExecuteNonQuery();
                             }

@@ -91,7 +91,7 @@ namespace DuplexerFinalTest.Helpers
         ///   (latest result always has DeviceCode = M{sn}A)
         /// All renames and inserts are wrapped in one SQL transaction.
         /// </summary>
-        public void SaveTestResultsWithHistory(MeasMainModel measMain, List<MeasManualTestModel> manualTests)
+        public bool SaveTestResultsWithHistory(MeasMainModel measMain, List<MeasManualTestModel> manualTests)
         {
             try
             {
@@ -100,6 +100,7 @@ namespace DuplexerFinalTest.Helpers
                 string[] existing = GetExistingDeviceCodes(measMain.SerialNo);
                 Shared.logger?.Log($"DB save: SerialNo={measMain.SerialNo} | existing={existing.Length} records | DeviceCode={baseCode}");
 
+                bool committed = false;
                 using (var transaction = _connection.BeginTransaction())
                 {
                     try
@@ -156,7 +157,7 @@ namespace DuplexerFinalTest.Helpers
                                 cmd.Parameters.AddWithValue("@tid", mt.TestID);
                                 cmd.Parameters.AddWithValue("@td",
                                     (double.IsNaN(mt.TestData) || double.IsInfinity(mt.TestData))
-                                        ? (object)DBNull.Value
+                                        ? (object)(-9999.0)
                                         : mt.TestData);
                                 cmd.Parameters.AddWithValue("@pass", mt.Passed ? 1 : 0);
                                 cmd.ExecuteNonQuery();
@@ -164,6 +165,7 @@ namespace DuplexerFinalTest.Helpers
                         }
 
                         transaction.Commit();
+                        committed = true;
                         Shared.logger?.Log($"DB save complete: {baseCode} | {manualTests.Count} MeasManualTest rows", MessageType.Success);
                     }
                     catch (Exception ex)
@@ -172,10 +174,12 @@ namespace DuplexerFinalTest.Helpers
                         Shared.logger?.LogError($"DB save rolled back for {baseCode}", ex);
                     }
                 }
+                return committed;
             }
             catch (Exception ex)
             {
                 Shared.logger?.LogError($"SaveTestResultsWithHistory({measMain?.SerialNo})", ex);
+                return false;
             }
         }
 
@@ -316,7 +320,10 @@ namespace DuplexerFinalTest.Helpers
                 {
                     cmd.Parameters.AddWithValue("@dc", model.DeviceCode);
                     cmd.Parameters.AddWithValue("@tid", model.TestID);
-                    cmd.Parameters.AddWithValue("@td", model.TestData);
+                    cmd.Parameters.AddWithValue("@td",
+                        (double.IsNaN(model.TestData) || double.IsInfinity(model.TestData))
+                            ? (object)(-9999.0)
+                            : model.TestData);
                     cmd.Parameters.AddWithValue("@pass", model.Passed ? 1 : 0);
                     cmd.ExecuteNonQuery();
                     return true;

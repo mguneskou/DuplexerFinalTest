@@ -518,8 +518,11 @@ namespace DuplexerFinalTest
 
                 if (autoSave)
                 {
-                    SaveResultsToDatabase();
-                    Shared.logger?.Log("Results saved to database automatically", MessageType.Success);
+                    bool saved = SaveResultsToDatabase();
+                    if (saved)
+                        Shared.logger?.Log("Results saved to database automatically", MessageType.Success);
+                    else
+                        Shared.logger?.Log("DB auto-save: one or more DUTs failed to save — see error(s) above", MessageType.Warning);
                 }
                 else
                 {
@@ -582,8 +585,10 @@ namespace DuplexerFinalTest
             }
         }
 
-        private void SaveResultsToDatabase()
+        private bool SaveResultsToDatabase()
         {
+            bool allSaved = true;
+
             // ── Base DUTs ──────────────────────────────────────────────────────
             if (Shared.infoModel.Test.BaseDUTs?.Count > 0)
             {
@@ -633,7 +638,8 @@ namespace DuplexerFinalTest
                         }
                     }
 
-                    Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels);
+                    if (!Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels))
+                        allSaved = false;
 
                     // Archive result files for this serial
                     Directory.CreateDirectory(Path.Combine(Shared.BaseResultsPath, "Archive"));
@@ -691,7 +697,8 @@ namespace DuplexerFinalTest
                         }
                     }
 
-                    Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels);
+                    if (!Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels))
+                        allSaved = false;
 
                     // Archive result files for this serial
                     Directory.CreateDirectory(Path.Combine(Shared.RemoteResultsPath, "Archive"));
@@ -699,6 +706,7 @@ namespace DuplexerFinalTest
                         File.Move(result.FullName, Path.Combine(Shared.RemoteResultsPath, "Archive", result.Name), true);
                 }
             }
+            return allSaved;
         }
 
         private void MnuSaveToDatabase_Click(object sender, EventArgs e)
@@ -706,8 +714,11 @@ namespace DuplexerFinalTest
             try
             {
                 mnuSaveToDatabase.Enabled = false;
-                SaveResultsToDatabase();
-                Shared.logger?.Log("Results saved to database manually", MessageType.Success);
+                bool saved = SaveResultsToDatabase();
+                if (saved)
+                    Shared.logger?.Log("Results saved to database manually", MessageType.Success);
+                else
+                    Shared.logger?.Log("DB manual save: one or more DUTs failed to save — see error(s) above", MessageType.Warning);
                 mnuSaveToDatabase.Visible = false;
             }
             catch (Exception ex)

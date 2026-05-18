@@ -81,8 +81,16 @@ namespace DuplexerFinalTest
         private TextBox _txtOldResultsFolder;
         private NumericUpDown _nudGoldTol;
         private Button _btnCompareGold;
+        private TextBox _txtReportFolder;
+        private Button _btnSaveReport;
         private DataGridView _dgvGoldResults;
         private BackgroundWorker _bwGold;
+        // last compare metadata — used by report generator
+        private List<object[]> _lastCompareResults;
+        private string _lastCompareOldFolder;
+        private string _lastCompareSeqName;
+        private double _lastCompareTol;
+        private DateTime _lastCompareTime;
 
         // ─────────────────────────────────────────────────────────────────────
         public DiagnosticForm()
@@ -407,7 +415,7 @@ namespace DuplexerFinalTest
             pnlProg.Controls.Add(_lblGoldRunStatus);
 
             // ── 2. Compare with previous gold standard ──────────────────────
-            var grpCmp = new GroupBox { Text = "2.  Compare with Previous Gold Standard (Old Test Kit)", Dock = DockStyle.Fill, Height = 95 };
+            var grpCmp = new GroupBox { Text = "2.  Compare with Previous Gold Standard (Old Test Kit)", Dock = DockStyle.Fill, AutoSize = true };
             var pnlCmp = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(6) };
 
             var row2 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
@@ -427,6 +435,18 @@ namespace DuplexerFinalTest
             _btnCompareGold.Click += BtnCompareGold_Click;
             row3.Controls.Add(_btnCompareGold);
             pnlCmp.Controls.Add(row3);
+
+            var row4 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
+            row4.Controls.Add(MakeLabel("Report folder:", 100));
+            _txtReportFolder = new TextBox { Width = 390, Margin = new Padding(0, 4, 8, 4) };
+            row4.Controls.Add(_txtReportFolder);
+            var btnBrowseReport = new Button { Text = "Browse...", Width = 85, Height = 32, Margin = new Padding(4) };
+            btnBrowseReport.Click += BtnBrowseReportFolder_Click;
+            row4.Controls.Add(btnBrowseReport);
+            _btnSaveReport = new Button { Text = "💾  Save Report", Width = 145, Height = 32, Margin = new Padding(4), Enabled = false };
+            _btnSaveReport.Click += BtnSaveReport_Click;
+            row4.Controls.Add(_btnSaveReport);
+            pnlCmp.Controls.Add(row4);
             grpCmp.Controls.Add(pnlCmp);
 
             // ── Results grid ─────────────────────────────────────────────────
@@ -1130,6 +1150,13 @@ namespace DuplexerFinalTest
 
             var results = CompareGoldRuns(oldFolder, gsBase, gsRemote, tol);
 
+            // Store metadata for report generation
+            _lastCompareResults    = results;
+            _lastCompareOldFolder  = oldFolder;
+            _lastCompareSeqName    = _cmbGoldSeq.SelectedItem?.ToString() ?? "";
+            _lastCompareTol        = tol;
+            _lastCompareTime       = DateTime.Now;
+
             _dgvGoldResults.Rows.Clear();
             int pass = 0, fail = 0;
             foreach (var row in results)
@@ -1140,6 +1167,205 @@ namespace DuplexerFinalTest
                 else   { fail++; _dgvGoldResults.Rows[i].DefaultCellStyle.BackColor = Color.MistyRose; }
             }
             LogOk($"Compare complete — {pass} pass, {fail} fail  ({results.Count} matched file pairs).");
+
+            _btnSaveReport.Enabled = results.Count > 0;
+        }
+
+        private void BtnBrowseReportFolder_Click(object sender, EventArgs e)
+        {
+            using (var fbd = new FolderBrowserDialog
+            {
+                Description = "Select folder to save the Gold Standard comparison report"
+            })
+            {
+                if (!string.IsNullOrEmpty(_txtReportFolder.Text) &&
+                    Directory.Exists(_txtReportFolder.Text))
+                    fbd.SelectedPath = _txtReportFolder.Text;
+
+                if (fbd.ShowDialog() == DialogResult.OK)
+                    _txtReportFolder.Text = fbd.SelectedPath;
+            }
+        }
+
+        private void BtnSaveReport_Click(object sender, EventArgs e)
+        {
+            if (_lastCompareResults == null || _lastCompareResults.Count == 0)
+            { LogErr("No comparison results to save. Run Compare first."); return; }
+
+            string reportDir = _txtReportFolder.Text.Trim();
+            if (string.IsNullOrEmpty(reportDir))
+            {
+                using (var fbd = new FolderBrowserDialog { Description = "Select folder to save the report" })
+                {
+                    if (fbd.ShowDialog() != DialogResult.OK) return;
+                    reportDir = fbd.SelectedPath;
+                    _txtReportFolder.Text = reportDir;
+                }
+            }
+
+            if (!Directory.Exists(reportDir))
+            {
+                try { Directory.CreateDirectory(reportDir); }
+                catch (Exception ex) { LogErr($"Cannot create report folder: {ex.Message}"); return; }
+            }
+
+            string stamp    = _lastCompareTime.ToString("yyyyMMdd_HHmmss");
+            string baseName = $"GoldStd_Report_{stamp}";
+
+            try
+            {
+                string htmlPath = Path.Combine(reportDir, baseName + ".html");
+                string csvPath  = Path.Combine(reportDir, baseName + ".csv");
+
+                File.WriteAllText(htmlPath, BuildGoldReportHtml(), System.Text.Encoding.UTF8);
+                File.WriteAllText(csvPath,  BuildGoldReportCsv(),  System.Text.Encoding.UTF8);
+
+                LogOk($"Report saved → {htmlPath}");
+                LogOk($"CSV saved    → {csvPath}");
+            }
+            catch (Exception ex) { LogErr($"Failed to save report: {ex.Message}"); }
+        }
+
+        private string BuildGoldReportHtml()
+        {
+            string gsBase   = GoldStandardsBasePath   ?? "(not configured)";
+            string gsRemote = GoldStandardsRemotePath ?? "(not configured)";
+
+            int total = _lastCompareResults.Count;
+            int pass  = 0; int fail = 0;
+            double maxAll = 0; double sumMax = 0;
+            foreach (var r in _lastCompareResults)
+            {
+                bool ok = r[5].ToString().StartsWith("✓");
+                if (ok) pass++; else fail++;
+                if (double.TryParse(r[3].ToString(), System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double d))
+                {
+                    sumMax += d;
+                    if (d > maxAll) maxAll = d;
+                }
+            }
+            double avgMax = total > 0 ? sumMax / total : 0;
+            bool overall  = fail == 0;
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("<!DOCTYPE html>");
+            sb.AppendLine("<html><head><meta charset=\"utf-8\"/>");
+            sb.AppendLine("<title>Gold Standard Comparison Report</title>");
+            sb.AppendLine("<style>");
+            sb.AppendLine("body{font-family:Arial,sans-serif;font-size:11pt;margin:36px;color:#222}");
+            sb.AppendLine("h1{color:#003366;margin-bottom:4px}");
+            sb.AppendLine(".meta{font-size:10pt;color:#555;margin-bottom:16px}");
+            sb.AppendLine(".info-table{border-collapse:collapse;margin-bottom:18px}");
+            sb.AppendLine(".info-table td{padding:3px 14px 3px 0;vertical-align:top}");
+            sb.AppendLine(".info-table td:first-child{font-weight:bold;white-space:nowrap;color:#003366}");
+            sb.AppendLine(".summary{background:#f0f4fa;border-left:5px solid #003366;padding:12px 18px;margin-bottom:22px;border-radius:3px}");
+            sb.AppendLine(".summary b{color:#003366}");
+            sb.AppendLine(".overall-pass{color:#155724;font-weight:bold;font-size:13pt}");
+            sb.AppendLine(".overall-fail{color:#721c24;font-weight:bold;font-size:13pt}");
+            sb.AppendLine("table.results{border-collapse:collapse;width:100%}");
+            sb.AppendLine("table.results th{background:#003366;color:#fff;padding:7px 12px;text-align:left;font-size:10pt}");
+            sb.AppendLine("table.results td{border:1px solid #ccc;padding:5px 12px;font-size:10pt}");
+            sb.AppendLine("table.results tr:nth-child(even){background:#f9f9f9}");
+            sb.AppendLine(".pass-cell{background:#d4edda;color:#155724;font-weight:bold;text-align:center}");
+            sb.AppendLine(".fail-cell{background:#f8d7da;color:#721c24;font-weight:bold;text-align:center}");
+            sb.AppendLine(".footer{margin-top:32px;font-size:9pt;color:#aaa}");
+            sb.AppendLine("</style></head><body>");
+
+            sb.AppendLine("<h1>Gold Standard Comparison Report</h1>");
+            sb.AppendLine($"<div class=\"meta\">Generated: {_lastCompareTime:yyyy-MM-dd  HH:mm:ss}</div>");
+
+            sb.AppendLine("<table class=\"info-table\">");
+            sb.AppendLine($"<tr><td>Sequence</td><td>{HtmlEnc(_lastCompareSeqName)}</td></tr>");
+            sb.AppendLine($"<tr><td>New results — Base</td><td>{HtmlEnc(gsBase)}</td></tr>");
+            sb.AppendLine($"<tr><td>New results — Remote</td><td>{HtmlEnc(gsRemote)}</td></tr>");
+            sb.AppendLine($"<tr><td>Reference (old test kit)</td><td>{HtmlEnc(_lastCompareOldFolder)}</td></tr>");
+            sb.AppendLine($"<tr><td>Tolerance</td><td>±{_lastCompareTol:F1}%</td></tr>");
+            sb.AppendLine("</table>");
+
+            sb.AppendLine("<div class=\"summary\">");
+            sb.AppendLine($"<b>Pairs compared:</b> {total} &nbsp;|&nbsp; <b>Passed:</b> {pass} &nbsp;|&nbsp; <b>Failed:</b> {fail}<br/>");
+            sb.AppendLine($"<b>Overall Max Δ%:</b> {maxAll:F2}% &nbsp;|&nbsp; <b>Average Max Δ%:</b> {avgMax:F2}%<br/><br/>");
+            sb.AppendLine(overall
+                ? $"<span class=\"overall-pass\">&#10003; OVERALL RESULT: PASS</span>"
+                : $"<span class=\"overall-fail\">&#10007; OVERALL RESULT: FAIL  ({fail} pair(s) exceeded ±{_lastCompareTol:F1}%)</span>");
+            sb.AppendLine("</div>");
+
+            sb.AppendLine("<table class=\"results\">");
+            sb.AppendLine("<tr><th>DUT Serial</th><th>Test Type</th><th>Points Compared</th><th>Max Δ%</th><th>Worst Column</th><th>Result</th></tr>");
+            foreach (var r in _lastCompareResults)
+            {
+                bool ok   = r[5].ToString().StartsWith("✓");
+                string cls = ok ? "pass-cell" : "fail-cell";
+                sb.AppendLine("<tr>");
+                for (int i = 0; i < 5; i++)
+                    sb.AppendLine($"<td>{HtmlEnc(r[i]?.ToString())}</td>");
+                sb.AppendLine($"<td class=\"{cls}\">{HtmlEnc(r[5]?.ToString())}</td>");
+                sb.AppendLine("</tr>");
+            }
+            sb.AppendLine("</table>");
+
+            sb.AppendLine($"<div class=\"footer\">Generated by DuplexerFinalTest v{Shared.SoftwareVersion}</div>");
+            sb.AppendLine("</body></html>");
+            return sb.ToString();
+        }
+
+        private string BuildGoldReportCsv()
+        {
+            string gsBase   = GoldStandardsBasePath   ?? "";
+            string gsRemote = GoldStandardsRemotePath ?? "";
+
+            var sb = new System.Text.StringBuilder();
+            // metadata header
+            sb.AppendLine($"Gold Standard Comparison Report");
+            sb.AppendLine($"Generated,{_lastCompareTime:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"Sequence,{_lastCompareSeqName}");
+            sb.AppendLine($"New Base Folder,{gsBase}");
+            sb.AppendLine($"New Remote Folder,{gsRemote}");
+            sb.AppendLine($"Reference Folder,{_lastCompareOldFolder}");
+            sb.AppendLine($"Tolerance ±%,{_lastCompareTol:F1}");
+            sb.AppendLine();
+
+            int pass = 0; int fail = 0;
+            double maxAll = 0; double sumMax = 0;
+            foreach (var r in _lastCompareResults)
+            {
+                bool ok = r[5].ToString().StartsWith("✓");
+                if (ok) pass++; else fail++;
+                if (double.TryParse(r[3].ToString(), System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double d))
+                { sumMax += d; if (d > maxAll) maxAll = d; }
+            }
+            int total   = _lastCompareResults.Count;
+            double avg  = total > 0 ? sumMax / total : 0;
+            string ovr  = fail == 0 ? "PASS" : "FAIL";
+            sb.AppendLine($"Total Pairs,{total},Passed,{pass},Failed,{fail}");
+            sb.AppendLine($"Overall Max Delta%,{maxAll:F2},Avg Max Delta%,{avg:F2},Overall Result,{ovr}");
+            sb.AppendLine();
+
+            sb.AppendLine("DUT Serial,Test Type,Points Compared,Max Delta%,Worst Column,Result");
+            foreach (var r in _lastCompareResults)
+                sb.AppendLine($"{CsvEsc(r[0])},{CsvEsc(r[1])},{r[2]},{r[3]},{CsvEsc(r[4])},{CsvEsc(r[5])}");
+
+            return sb.ToString();
+        }
+
+        private static string CsvEsc(object val)
+        {
+            string s = val?.ToString() ?? "";
+            if (s.Contains(',') || s.Contains('"') || s.Contains('\n'))
+                return "\"" + s.Replace("\"", "\"\"") + "\"";
+            return s;
+        }
+
+        private static string HtmlEnc(object val)
+        {
+            if (val == null) return "";
+            return val.ToString()
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;")
+                .Replace("\"", "&quot;");
         }
 
         private static (string serial, string testType) ParseGoldFileName(string name)

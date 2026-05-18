@@ -75,16 +75,13 @@ namespace DuplexerFinalTest
 
         // ── Tab 6: Gold Standard ──────────────────────────────────────────────
         private ComboBox _cmbGoldSeq;
-        private NumericUpDown _nudGoldTemp;
         private Button _btnRunGoldStd;
         private Label _lblGoldRunStatus;
         private ProgressBar _pbGold;
-        private ComboBox _cmbGoldRunA;
-        private ComboBox _cmbGoldRunB;
+        private TextBox _txtOldResultsFolder;
         private NumericUpDown _nudGoldTol;
         private Button _btnCompareGold;
         private DataGridView _dgvGoldResults;
-        private string _lastGoldRunFolder;
         private BackgroundWorker _bwGold;
 
         // ─────────────────────────────────────────────────────────────────────
@@ -386,27 +383,20 @@ namespace DuplexerFinalTest
             tlp.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
             // ── 1. Select sequence & run ────────────────────────────────────
-            var grpRun = new GroupBox { Text = "1.  Select Sequence & Run", Dock = DockStyle.Fill, Height = 108 };
+            var grpRun = new GroupBox { Text = "1.  Select Sequence & Run", Dock = DockStyle.Fill, Height = 76 };
             var pnlRun = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(6) };
 
             var row1 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
             row1.Controls.Add(MakeLabel("Sequence:", 75));
             _cmbGoldSeq = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 310, Margin = new Padding(0, 4, 12, 4) };
-            _cmbGoldSeq.SelectedIndexChanged += (s, e) => RefreshGoldRunComboboxes();
             row1.Controls.Add(_cmbGoldSeq);
             var btnRefreshSeq = new Button { Text = "⟳  Refresh Sequences", Width = 170, Height = 32, Margin = new Padding(4) };
             btnRefreshSeq.Click += (s, e) => RefreshGoldSequences();
             row1.Controls.Add(btnRefreshSeq);
-            pnlRun.Controls.Add(row1);
-
-            var row2 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
-            row2.Controls.Add(MakeLabel("Temperature (°C):", 130));
-            _nudGoldTemp = new NumericUpDown { Minimum = -80, Maximum = 180, DecimalPlaces = 1, Value = 25, Width = 85, Margin = new Padding(0, 4, 16, 4) };
-            row2.Controls.Add(_nudGoldTemp);
             _btnRunGoldStd = new Button { Text = "▶  Run Full Gold Standard Test", Width = 255, Height = 32, Margin = new Padding(4) };
             _btnRunGoldStd.Click += BtnRunGoldStd_Click;
-            row2.Controls.Add(_btnRunGoldStd);
-            pnlRun.Controls.Add(row2);
+            row1.Controls.Add(_btnRunGoldStd);
+            pnlRun.Controls.Add(row1);
             grpRun.Controls.Add(pnlRun);
 
             // ── Progress + status ────────────────────────────────────────────
@@ -416,30 +406,27 @@ namespace DuplexerFinalTest
             pnlProg.Controls.Add(_pbGold);
             pnlProg.Controls.Add(_lblGoldRunStatus);
 
-            // ── 2. Compare saved runs ────────────────────────────────────────
-            var grpCmp = new GroupBox { Text = "2.  Compare Saved Runs", Dock = DockStyle.Fill, Height = 95 };
+            // ── 2. Compare with previous gold standard ──────────────────────
+            var grpCmp = new GroupBox { Text = "2.  Compare with Previous Gold Standard (Old Test Kit)", Dock = DockStyle.Fill, Height = 95 };
             var pnlCmp = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(6) };
 
-            var row3 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
-            row3.Controls.Add(MakeLabel("Run A (newer):", 105));
-            _cmbGoldRunA = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200, Margin = new Padding(0, 4, 20, 4) };
-            row3.Controls.Add(_cmbGoldRunA);
-            row3.Controls.Add(MakeLabel("Run B (reference):", 130));
-            _cmbGoldRunB = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200, Margin = new Padding(0, 4, 8, 4) };
-            row3.Controls.Add(_cmbGoldRunB);
-            var btnRefreshRuns = new Button { Text = "⟳", Width = 32, Height = 32, Margin = new Padding(4) };
-            btnRefreshRuns.Click += (s, e) => RefreshGoldRunComboboxes();
-            row3.Controls.Add(btnRefreshRuns);
-            pnlCmp.Controls.Add(row3);
+            var row2 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
+            row2.Controls.Add(MakeLabel("Previous results folder:", 160));
+            _txtOldResultsFolder = new TextBox { Width = 390, Margin = new Padding(0, 4, 8, 4) };
+            row2.Controls.Add(_txtOldResultsFolder);
+            var btnBrowse = new Button { Text = "Browse...", Width = 85, Height = 32, Margin = new Padding(4) };
+            btnBrowse.Click += BtnBrowseOldResults_Click;
+            row2.Controls.Add(btnBrowse);
+            pnlCmp.Controls.Add(row2);
 
-            var row4 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
-            row4.Controls.Add(MakeLabel("Tolerance ±%:", 100));
+            var row3 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
+            row3.Controls.Add(MakeLabel("Tolerance ±%:", 100));
             _nudGoldTol = new NumericUpDown { Minimum = 0.1m, Maximum = 50, DecimalPlaces = 1, Value = 5.0m, Width = 80, Margin = new Padding(0, 4, 16, 4) };
-            row4.Controls.Add(_nudGoldTol);
-            _btnCompareGold = new Button { Text = "Compare A vs B", Width = 175, Height = 32, Margin = new Padding(4) };
+            row3.Controls.Add(_nudGoldTol);
+            _btnCompareGold = new Button { Text = "Compare", Width = 120, Height = 32, Margin = new Padding(4) };
             _btnCompareGold.Click += BtnCompareGold_Click;
-            row4.Controls.Add(_btnCompareGold);
-            pnlCmp.Controls.Add(row4);
+            row3.Controls.Add(_btnCompareGold);
+            pnlCmp.Controls.Add(row3);
             grpCmp.Controls.Add(pnlCmp);
 
             // ── Results grid ─────────────────────────────────────────────────
@@ -941,12 +928,21 @@ namespace DuplexerFinalTest
         }
 
         // ── GOLD STANDARD helpers ─────────────────────────────────────────────
-        private string GoldStandardsPath
+        private string GoldStandardsBasePath
         {
             get
             {
                 var gs = Shared.sharedGeneralSettings?.GeneralSettings?[0];
-                return gs != null ? Path.Combine(gs.RESULTS_FOLDER, "Gold Standards") : null;
+                return gs != null ? Path.Combine(gs.RESULTS_FOLDER, "GoldStandards", "Base") : null;
+            }
+        }
+
+        private string GoldStandardsRemotePath
+        {
+            get
+            {
+                var gs = Shared.sharedGeneralSettings?.GeneralSettings?[0];
+                return gs != null ? Path.Combine(gs.RESULTS_FOLDER, "GoldStandards", "Remote") : null;
             }
         }
 
@@ -957,35 +953,6 @@ namespace DuplexerFinalTest
                 _cmbGoldSeq.Items.Add(seq.SequenceName ?? "(unnamed)");
             if (_cmbGoldSeq.Items.Count > 0)
                 _cmbGoldSeq.SelectedIndex = 0;
-            else
-                RefreshGoldRunComboboxes();
-        }
-
-        private void RefreshGoldRunComboboxes()
-        {
-            _cmbGoldRunA.Items.Clear();
-            _cmbGoldRunB.Items.Clear();
-
-            string seqName = _cmbGoldSeq.SelectedItem?.ToString();
-            string gsPath  = GoldStandardsPath;
-            if (string.IsNullOrEmpty(seqName) || string.IsNullOrEmpty(gsPath)) return;
-
-            string seqFolder = Path.Combine(gsPath, seqName);
-            if (!Directory.Exists(seqFolder)) return;
-
-            var runs = Directory.GetDirectories(seqFolder)
-                .Select(d => Path.GetFileName(d))
-                .OrderByDescending(n => n)  // newest first
-                .ToArray();
-
-            foreach (string run in runs)
-            {
-                _cmbGoldRunA.Items.Add(run);
-                _cmbGoldRunB.Items.Add(run);
-            }
-            if (_cmbGoldRunA.Items.Count > 0) _cmbGoldRunA.SelectedIndex = 0;
-            if (_cmbGoldRunB.Items.Count > 1) _cmbGoldRunB.SelectedIndex = 1;
-            else if (_cmbGoldRunB.Items.Count > 0) _cmbGoldRunB.SelectedIndex = 0;
         }
 
         // ── GOLD STANDARD run ─────────────────────────────────────────────────
@@ -997,53 +964,56 @@ namespace DuplexerFinalTest
                 _cmbGoldSeq.SelectedIndex >= Shared.AllAvailableTestSequences.Count)
             { LogErr("Select a test sequence first."); return; }
 
-            string gsPath = GoldStandardsPath;
-            if (string.IsNullOrEmpty(gsPath))
-            { LogErr("Results folder not configured in settings."); return; }
-
             var seq = Shared.AllAvailableTestSequences[_cmbGoldSeq.SelectedIndex];
             if (seq.BaseDUTs.Count == 0 && seq.RemoteDUTs.Count == 0)
             { LogErr($"Sequence '{seq.SequenceName}' has no DUTs."); return; }
 
-            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string runFolder = Path.Combine(gsPath, seq.SequenceName ?? "Unknown", timestamp);
-            try { Directory.CreateDirectory(runFolder); }
-            catch (Exception ex) { LogErr($"Cannot create gold standard folder: {ex.Message}"); return; }
+            string gsBase   = GoldStandardsBasePath;
+            string gsRemote = GoldStandardsRemotePath;
+            if (string.IsNullOrEmpty(gsBase))
+            { LogErr("Results folder not configured in settings."); return; }
 
-            _pbGold.Value = 0;
-            _lblGoldRunStatus.Text      = $"Running...  →  {runFolder}";
+            try
+            {
+                if (seq.BaseDUTs.Count   > 0) Directory.CreateDirectory(gsBase);
+                if (seq.RemoteDUTs.Count > 0) Directory.CreateDirectory(gsRemote);
+            }
+            catch (Exception ex) { LogErr($"Cannot create gold standard folders: {ex.Message}"); return; }
+
+            _pbGold.Value               = 0;
+            _lblGoldRunStatus.Text      = "Running...";
             _lblGoldRunStatus.ForeColor = Color.DimGray;
             _btnRunGoldStd.Enabled      = false;
             _dgvGoldResults.Rows.Clear();
 
-            LogInfo($"Gold standard run started — sequence: {seq.SequenceName}  temp: {_nudGoldTemp.Value:F1}°C");
-            LogInfo($"Output folder: {runFolder}");
+            LogInfo($"Gold standard run started — sequence: {seq.SequenceName}");
+            LogInfo($"  Base   → {gsBase}");
+            LogInfo($"  Remote → {gsRemote}");
 
             _bwGold.RunWorkerAsync(
-                new Tuple<TestSequenceModel, string, double>(seq, runFolder, (double)_nudGoldTemp.Value));
+                new Tuple<TestSequenceModel, string, string>(seq, gsBase, gsRemote));
         }
 
         private void BwGold_DoWork(object sender, DoWorkEventArgs e)
         {
-            var bw       = (BackgroundWorker)sender;
-            var args     = (Tuple<TestSequenceModel, string, double>)e.Argument;
-            var seq      = args.Item1;
-            string runFolder = args.Item2;
-            double temp  = args.Item3;
+            var bw     = (BackgroundWorker)sender;
+            var args   = (Tuple<TestSequenceModel, string, string>)e.Argument;
+            var seq    = args.Item1;
+            string gsBase   = args.Item2;
+            string gsRemote = args.Item3;
+            const double temp = 25.0;
 
             int totalOps = seq.BaseDUTs.Count * 2 + seq.RemoteDUTs.Count * 3;
             if (totalOps == 0) totalOps = 1;
             int done = 0;
 
-            // Redirect result CSV paths to the gold standards folder
             string origBase   = Shared.BaseResultsPath;
             string origRemote = Shared.RemoteResultsPath;
-            Shared.BaseResultsPath   = runFolder;
-            Shared.RemoteResultsPath = runFolder;
+            Shared.BaseResultsPath   = gsBase;
+            Shared.RemoteResultsPath = gsRemote;
 
             try
             {
-                // Base DUTs: Base_Z_IB_IOP then Base_Z_IPD
                 for (int i = 0; i < seq.BaseDUTs.Count; i++)
                 {
                     var tr = new TestResultModel { OverallPassFail = OverallPassFail.PASS, SaveIntoProductionDB = false };
@@ -1061,7 +1031,6 @@ namespace DuplexerFinalTest
                     if (c2) { e.Result = null; return; }
                 }
 
-                // Remote DUTs: Remote_Z_IOP, Remote_Z_IPV, Remote_Z_VPV
                 for (int i = 0; i < seq.RemoteDUTs.Count; i++)
                 {
                     var tr = new TestResultModel { OverallPassFail = OverallPassFail.PASS, SaveIntoProductionDB = false };
@@ -1091,7 +1060,7 @@ namespace DuplexerFinalTest
                 Shared.RemoteResultsPath = origRemote;
             }
 
-            e.Result = runFolder;
+            e.Result = new Tuple<string, string>(gsBase, gsRemote);
         }
 
         private void BwGold_Completed(object sender, RunWorkerCompletedEventArgs e)
@@ -1107,8 +1076,8 @@ namespace DuplexerFinalTest
                 return;
             }
 
-            string runFolder = e.Result as string;
-            if (runFolder == null)
+            var paths = e.Result as Tuple<string, string>;
+            if (paths == null)
             {
                 LogInfo("Gold standard run cancelled.");
                 _lblGoldRunStatus.Text      = "Cancelled.";
@@ -1116,50 +1085,56 @@ namespace DuplexerFinalTest
                 return;
             }
 
-            _lastGoldRunFolder          = runFolder;
-            _lblGoldRunStatus.Text      = $"Saved:  {runFolder}";
+            _lblGoldRunStatus.Text      = $"Saved  →  Base: {paths.Item1}   Remote: {paths.Item2}";
             _lblGoldRunStatus.ForeColor = Color.DarkGreen;
-            LogOk($"Gold standard run complete — saved to: {runFolder}");
-
-            RefreshGoldRunComboboxes();
-            string stamp = Path.GetFileName(runFolder);
-            for (int i = 0; i < _cmbGoldRunA.Items.Count; i++)
-            {
-                if (_cmbGoldRunA.Items[i].ToString() == stamp)
-                { _cmbGoldRunA.SelectedIndex = i; break; }
-            }
+            LogOk("Gold standard run complete.");
+            LogOk($"  Base results   → {paths.Item1}");
+            LogOk($"  Remote results → {paths.Item2}");
         }
 
         // ── GOLD STANDARD comparison ──────────────────────────────────────────
+        private void BtnBrowseOldResults_Click(object sender, EventArgs e)
+        {
+            using (var fbd = new FolderBrowserDialog
+            {
+                Description = "Select the previous gold standard results folder (old test kit)"
+            })
+            {
+                if (!string.IsNullOrEmpty(_txtOldResultsFolder.Text) &&
+                    Directory.Exists(_txtOldResultsFolder.Text))
+                    fbd.SelectedPath = _txtOldResultsFolder.Text;
+
+                if (fbd.ShowDialog() == DialogResult.OK)
+                    _txtOldResultsFolder.Text = fbd.SelectedPath;
+            }
+        }
+
         private void BtnCompareGold_Click(object sender, EventArgs e)
         {
-            string seqName = _cmbGoldSeq.SelectedItem?.ToString();
-            string gsPath  = GoldStandardsPath;
-            if (string.IsNullOrEmpty(seqName) || string.IsNullOrEmpty(gsPath))
-            { LogErr("Select a sequence first."); return; }
+            string oldFolder = _txtOldResultsFolder.Text.Trim();
+            if (!Directory.Exists(oldFolder))
+            { LogErr("Select a valid previous results folder first (Browse...)."); return; }
 
-            string runA = _cmbGoldRunA.SelectedItem?.ToString();
-            string runB = _cmbGoldRunB.SelectedItem?.ToString();
-            if (string.IsNullOrEmpty(runA) || string.IsNullOrEmpty(runB))
-            { LogErr("Select both Run A and Run B."); return; }
-            if (runA == runB)
-            { LogErr("Run A and Run B must be different."); return; }
+            string gsBase   = GoldStandardsBasePath;
+            string gsRemote = GoldStandardsRemotePath;
+            if (string.IsNullOrEmpty(gsBase))
+            { LogErr("Results folder not configured in settings."); return; }
 
-            string folderA = Path.Combine(gsPath, seqName, runA);
-            string folderB = Path.Combine(gsPath, seqName, runB);
-            if (!Directory.Exists(folderA)) { LogErr($"Folder not found: {folderA}"); return; }
-            if (!Directory.Exists(folderB)) { LogErr($"Folder not found: {folderB}"); return; }
+            bool hasBase   = Directory.Exists(gsBase)   && Directory.GetFiles(gsBase,   "*.csv").Length > 0;
+            bool hasRemote = Directory.Exists(gsRemote) && Directory.GetFiles(gsRemote, "*.csv").Length > 0;
+            if (!hasBase && !hasRemote)
+            { LogErr("No gold standard results found in GoldStandards\\Base or Remote. Run the test first."); return; }
 
             double tol = (double)_nudGoldTol.Value;
-            LogInfo($"Comparing run [{runA}]  vs  [{runB}]  tolerance ±{tol:F1}%");
+            LogInfo($"Comparing new gold standard results vs: {oldFolder}  tolerance ±{tol:F1}%");
 
-            var results = CompareGoldRuns(folderA, folderB, tol);
+            var results = CompareGoldRuns(oldFolder, gsBase, gsRemote, tol);
 
             _dgvGoldResults.Rows.Clear();
             int pass = 0, fail = 0;
             foreach (var row in results)
             {
-                int i  = _dgvGoldResults.Rows.Add(row);
+                int i   = _dgvGoldResults.Rows.Add(row);
                 bool ok = row[5].ToString().StartsWith("✓");
                 if (ok) pass++;
                 else   { fail++; _dgvGoldResults.Rows[i].DefaultCellStyle.BackColor = Color.MistyRose; }
@@ -1179,31 +1154,37 @@ namespace DuplexerFinalTest
             return (name, "Unknown");
         }
 
-        private List<object[]> CompareGoldRuns(string folderA, string folderB, double tolPct)
+        private List<object[]> CompareGoldRuns(
+            string oldFolder, string newBaseFolder, string newRemoteFolder, double tolPct)
         {
             var results = new List<object[]>();
             try
             {
-                // Index folder B files by (serial|testType)
-                var indexB = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                foreach (string f in Directory.GetFiles(folderB, "*.csv"))
+                // Collect new result files from GoldStandards\Base and GoldStandards\Remote
+                var newFiles = new List<string>();
+                if (Directory.Exists(newBaseFolder))   newFiles.AddRange(Directory.GetFiles(newBaseFolder,   "*.csv"));
+                if (Directory.Exists(newRemoteFolder)) newFiles.AddRange(Directory.GetFiles(newRemoteFolder, "*.csv"));
+
+                // Index old files by (serial|testType), searching recursively
+                var indexOld = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string f in Directory.GetFiles(oldFolder, "*.csv", SearchOption.AllDirectories))
                 {
                     var (s, t) = ParseGoldFileName(Path.GetFileNameWithoutExtension(f));
                     string key = s + "|" + t;
-                    if (!indexB.ContainsKey(key)) indexB[key] = f;
+                    if (!indexOld.ContainsKey(key)) indexOld[key] = f;
                 }
 
-                foreach (string fA in Directory.GetFiles(folderA, "*.csv"))
+                foreach (string fNew in newFiles)
                 {
-                    var (serial, testType) = ParseGoldFileName(Path.GetFileNameWithoutExtension(fA));
+                    var (serial, testType) = ParseGoldFileName(Path.GetFileNameWithoutExtension(fNew));
                     string key = serial + "|" + testType;
-                    if (!indexB.TryGetValue(key, out string fB))
+                    if (!indexOld.TryGetValue(key, out string fOld))
                     {
-                        LogInfo($"  No match in Run B for: {serial} / {testType}");
+                        LogInfo($"  No match in old results for: {serial} / {testType}");
                         continue;
                     }
 
-                    var (maxDelta, worstCol, count, pass) = CompareCSVSummary(fA, fB, tolPct);
+                    var (maxDelta, worstCol, count, pass) = CompareCSVSummary(fOld, fNew, tolPct);
                     results.Add(new object[] { serial, testType, count, $"{maxDelta:F2}", worstCol,
                         pass ? "✓ PASS" : "✗ FAIL" });
                 }

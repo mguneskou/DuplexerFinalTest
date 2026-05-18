@@ -67,6 +67,7 @@ namespace DuplexerFinalTest
             this.mnuViewLogFiles = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuTestProcedure = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuHelp = new System.Windows.Forms.ToolStripMenuItem();
+            this.mnuDiagnostics = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuExit = new System.Windows.Forms.ToolStripMenuItem();
             this.timerElapsed = new System.Windows.Forms.Timer();
             ((System.ComponentModel.ISupportInitialize)(this.scMain)).BeginInit();
@@ -90,7 +91,7 @@ namespace DuplexerFinalTest
             // mnuFile
             this.mnuFile.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
                 this.mnuNewTest, this.mnuSaveToDatabase, this.mnuCalibration, this.mnuSettings, this.mnuViewLogFiles,
-                this.mnuTestProcedure, this.mnuHelp, new System.Windows.Forms.ToolStripSeparator(), this.mnuExit });
+                this.mnuTestProcedure, this.mnuHelp, this.mnuDiagnostics, new System.Windows.Forms.ToolStripSeparator(), this.mnuExit });
             this.mnuFile.Name = "mnuFile";
             this.mnuFile.Size = new System.Drawing.Size(46, 24);
             this.mnuFile.Text = "File";
@@ -138,6 +139,13 @@ namespace DuplexerFinalTest
             this.mnuHelp.Size = new System.Drawing.Size(200, 24);
             this.mnuHelp.Text = "Help (Equipment Test)";
             this.mnuHelp.Click += new System.EventHandler(this.MnuHelp_Click);
+
+            // mnuDiagnostics
+            this.mnuDiagnostics.Name = "mnuDiagnostics";
+            this.mnuDiagnostics.Size = new System.Drawing.Size(200, 24);
+            this.mnuDiagnostics.Text = "Equipment Diagnostics";
+            this.mnuDiagnostics.Visible = false;
+            this.mnuDiagnostics.Click += new System.EventHandler(this.MnuDiagnostics_Click);
 
             // mnuExit
             this.mnuExit.Name = "mnuExit";
@@ -514,6 +522,7 @@ namespace DuplexerFinalTest
         private System.Windows.Forms.ToolStripMenuItem mnuViewLogFiles;
         private System.Windows.Forms.ToolStripMenuItem mnuTestProcedure;
         private System.Windows.Forms.ToolStripMenuItem mnuHelp;
+        private System.Windows.Forms.ToolStripMenuItem mnuDiagnostics;
         private System.Windows.Forms.ToolStripMenuItem mnuExit;
         private System.Windows.Forms.Timer timerElapsed;
     }

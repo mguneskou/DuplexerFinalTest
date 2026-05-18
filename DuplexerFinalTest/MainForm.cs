@@ -71,6 +71,10 @@ namespace DuplexerFinalTest
                 mnuSaveToDatabase.Visible = false;   // hidden until test ends (in both modes)
                 mnuSaveToDatabase.Enabled = false;
                 Shared.logger?.Log($"DB auto-save: {(autoSave ? "ON" : "OFF")}");
+
+                bool diagEnabled = Shared.sharedGeneralSettings?.GeneralSettings[0]
+                    .ENABLE_DIAG_UI?.Trim().ToLower() == "true";
+                mnuDiagnostics.Visible = diagEnabled;
             }
             catch (Exception ex)
             {
@@ -414,6 +418,12 @@ namespace DuplexerFinalTest
             {
                 Shared.logger?.Log($"Help: {ex.Message}", MessageType.Error);
             }
+        }
+
+        private void MnuDiagnostics_Click(object sender, EventArgs e)
+        {
+            var frm = new DiagnosticForm();
+            frm.Show(this);
         }
 
         private void MnuExit_Click(object sender, EventArgs e)

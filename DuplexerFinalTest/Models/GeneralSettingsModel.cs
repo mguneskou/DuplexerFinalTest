@@ -41,6 +41,7 @@ namespace DuplexerFinalTest.Models
             dt.Rows.Add("Use Local Database", s.USE_LOCAL_DATABASE);
             dt.Rows.Add("Local DB Connection String", s.LOCAL_DATABASE_CONNECTION_STRING);
             dt.Rows.Add("Save Results to DB Automatically", s.SAVE_RESULTS_TO_DB_AUTO);
+            dt.Rows.Add("Enable Diagnostic UI", s.ENABLE_DIAG_UI);
             return dt;
         }
     }
@@ -82,5 +83,6 @@ namespace DuplexerFinalTest.Models
         public string USE_LOCAL_DATABASE { get; set; }
         public string LOCAL_DATABASE_CONNECTION_STRING { get; set; }
         public string SAVE_RESULTS_TO_DB_AUTO { get; set; }
+        public string ENABLE_DIAG_UI { get; set; }
     }
 }

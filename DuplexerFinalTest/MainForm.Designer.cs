@@ -137,7 +137,7 @@ namespace DuplexerFinalTest
             // mnuHelp
             this.mnuHelp.Name = "mnuHelp";
             this.mnuHelp.Size = new System.Drawing.Size(200, 24);
-            this.mnuHelp.Text = "Help (Equipment Test)";
+            this.mnuHelp.Text = "Help";
             this.mnuHelp.Click += new System.EventHandler(this.MnuHelp_Click);
 
             // mnuDiagnostics

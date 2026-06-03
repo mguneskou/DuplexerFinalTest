@@ -17,6 +17,13 @@ namespace DuplexerFinalTest.EquipmentSim
         private double _goTemperature = 25.0;
         private double _rampDurationMinutes = 5.0;
 
+        // Chamber program simulation state
+        private int _simStep = 0;
+        private DateTime _simStepStart = DateTime.MinValue;
+        private int _simExpectedSteps = 15;
+        private bool _simProgramRunning = false;
+        private bool _simPaused = false;
+
         public bool IsConnected { get; private set; }
         public ChamberTemperatureModel currentTemperature { get; set; } = new ChamberTemperatureModel();
 
@@ -83,11 +90,16 @@ namespace DuplexerFinalTest.EquipmentSim
 
         public bool VerifyProgram(int programNumber, string expectedName, int expectedSteps)
         {
+            _simExpectedSteps = expectedSteps;
             return true;
         }
 
         public bool RunLocalProgram(int programNumber, int startStep)
         {
+            _simStep = startStep;
+            _simStepStart = DateTime.Now;
+            _simProgramRunning = true;
+            _simPaused = false;
             return true;
         }
 
@@ -171,9 +183,51 @@ namespace DuplexerFinalTest.EquipmentSim
             }
         }
 
-        public bool ProgramPause() { return true; }
-        public bool ProgramContinue() { return true; }
+        public bool ProgramPause()
+        {
+            _simPaused = true;
+            return true;
+        }
+
+        public bool ProgramContinue()
+        {
+            _simPaused = false;
+            _simStepStart = DateTime.Now; // reset step timer so next advance takes 5 s
+            return true;
+        }
+
         public bool ProgramAdvance() { return true; }
-        public bool ProgramEnd(ChamberProgramEndConditions endCondition) { return true; }
+
+        public bool ProgramEnd(ChamberProgramEndConditions endCondition)
+        {
+            _simProgramRunning = false;
+            _simPaused = false;
+            return true;
+        }
+
+        // Simulates PRGM MON?: advances one step every 5 seconds for fast in-office testing.
+        public ChamberProgramMonitorModel GetProgramMonitor()
+        {
+            if (!_simProgramRunning)
+                return new ChamberProgramMonitorModel { Status = "STANDBY" };
+
+            if (_simPaused)
+                return new ChamberProgramMonitorModel { Status = "PAUSE", CurrentStep = _simStep, TotalSteps = _simExpectedSteps };
+
+            // Advance one step every 5 seconds
+            if ((DateTime.Now - _simStepStart).TotalSeconds >= 5)
+            {
+                _simStep++;
+                _simStepStart = DateTime.Now;
+            }
+
+            if (_simStep > _simExpectedSteps)
+            {
+                _simProgramRunning = false;
+                return new ChamberProgramMonitorModel { Status = "END", CurrentStep = _simExpectedSteps, TotalSteps = _simExpectedSteps };
+            }
+
+            return new ChamberProgramMonitorModel { Status = "RUN", CurrentStep = _simStep, TotalSteps = _simExpectedSteps, RemainingTime = "0:59:00" };
+        }
     }
 }

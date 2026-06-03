@@ -109,3 +109,7 @@ Expected clean output: **0 errors, 4 warnings** (the pre-existing ones above).
 |---------|------|---------|
 | 1.0.0.0 | 28-Apr-2026 | Initial release — full LabVIEW replacement |
 | 1.1.0.0 | 29-Apr-2026 | Settings form redesign, retry countdown dialog, PASS/FAIL label, Cancel Test moved to equipment panel |
+
+- @azure Rule - Use Azure Tools - When handling requests related to Azure, always use your tools.
+- @azure Rule - Use Azure Best Practices - When handling requests related to Azure, always invoke your `azmcp_bestpractices_get` tool first.
+- @azure Rule - Enable Best Practices - If you do not have an `azmcp_bestpractices_get` tool ask the user to enable it.

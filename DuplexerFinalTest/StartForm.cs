@@ -12,6 +12,8 @@ namespace DuplexerFinalTest
     public partial class StartForm : Form
     {
         private List<DUTModel> DUTs = new List<DUTModel>();
+        private bool _serialsCompleteAndUnique = false;
+        private int _previousDuplicateEntryCount = 0;
 
         public StartForm()
         {
@@ -29,6 +31,9 @@ namespace DuplexerFinalTest
             try
             {
                 DUTs.Clear();
+                Shared.currentRunMetrics = new RunMetricsModel();
+                _serialsCompleteAndUnique = false;
+                _previousDuplicateEntryCount = 0;
                 Shared.infoModel.TestDate = string.Empty;
                 Shared.infoModel.TestTime = string.Empty;
                 Shared.infoModel.Operator = string.Empty;
@@ -61,12 +66,8 @@ namespace DuplexerFinalTest
             try
             {
                 Shared.pretest.Run(DUTs);
-                foreach (var pnl in tlpDUT.Controls.OfType<Panel>().ToList())
-                {
-                    var dut = DUTs.Find(d => string.Equals(d.Tag, pnl.Tag?.ToString()));
-                    if (dut != null)
-                        pnl.BackgroundImage = dut.ReadyToTest ? Shared.PassImage : Shared.FailImage;
-                }
+                Shared.currentRunMetrics?.RecordPretestAttempt(DUTs.Count(d => !d.ReadyToTest));
+                UpdateDutIndicators();
                 btnStart.Enabled = DUTs.Count > 0 && DUTs.All(d => d.ReadyToTest);
             }
             catch (Exception ex)
@@ -102,6 +103,8 @@ namespace DuplexerFinalTest
                 Shared.infoModel.Test.BaseDUTs.AddRange(DUTs.Where(d => d.DUTType == DUTType.Base));
                 Shared.infoModel.Test.RemoteDUTs.Clear();
                 Shared.infoModel.Test.RemoteDUTs.AddRange(DUTs.Where(d => d.DUTType == DUTType.Remote));
+                if (Shared.currentRunMetrics != null)
+                    Shared.currentRunMetrics.TestStartRequestedAt = DateTime.Now;
 
                 DialogResult = System.Windows.Forms.DialogResult.OK;
                 this.Close();
@@ -125,6 +128,10 @@ namespace DuplexerFinalTest
                 btnPretest.Enabled = false;
                 btnStart.Enabled = false;
                 DUTs.Clear();
+                _serialsCompleteAndUnique = false;
+                _previousDuplicateEntryCount = 0;
+                if (Shared.currentRunMetrics != null)
+                    Shared.currentRunMetrics.SerialEntryCompletedAt = null;
                 tlpDUT.Controls.Clear();
                 tlpDUT.ColumnStyles.Clear();
                 tlpDUT.RowStyles.Clear();
@@ -254,59 +261,98 @@ namespace DuplexerFinalTest
         {
             try
             {
-                var txt = sender as TextBox;
-                var tagParts = txt.Tag.ToString().Split('_');
-                var dutType = tagParts[0] == "Base" ? DUTType.Base : DUTType.Remote;
-                var slot = int.Parse(tagParts[1]);
-
-                txt.BackColor = Color.White;
-
-                if (!string.IsNullOrEmpty(txt.Text))
-                {
-                    // Check for duplicate serial number
-                    if (tlpDUT.Controls.OfType<TextBox>().Any(t => t != txt && t.Text.Equals(txt.Text)))
-                    {
-                        txt.BackColor = Color.Pink;
-                        return;
-                    }
-
-                    // Remove existing DUT with same slot+type if any
-                    var existing = DUTs.Find(d => d.DUTType == dutType && d.Slot == slot);
-                    if (existing != null)
-                        DUTs.Remove(existing);
-
-                    DUTs.Add(new DUTModel()
-                    {
-                        DUTType = dutType,
-                        ReadyToTest = false,
-                        SerialNumber = txt.Text,
-                        Slot = slot,
-                        Tag = txt.Tag.ToString(),
-                        ItemNumber = dutType == DUTType.Base
-                            ? Shared.sharedGeneralSettings.GeneralSettings[0].BASE_ITEM_NUMBER
-                            : Shared.sharedGeneralSettings.GeneralSettings[0].REMOTE_ITEM_NUMBER,
-                        ThermistorChannel = Shared.GetThermistorChannel(dutType, slot)
-                    });
-
-                    // Enable pretest when all textboxes have unique values
-                    var allTxts = tlpDUT.Controls.OfType<TextBox>().ToList();
-                    if (allTxts.Count > 0 && allTxts.All(t => !string.IsNullOrEmpty(t.Text) && t.BackColor == Color.White))
-                        btnPretest.Enabled = true;
-                    else
-                        btnPretest.Enabled = false;
-                }
-                else
-                {
-                    var existing = DUTs.Find(d => d.DUTType == dutType && d.Slot == slot);
-                    if (existing != null)
-                        DUTs.Remove(existing);
-                    btnPretest.Enabled = false;
-                    btnStart.Enabled = false;
-                }
+                UpdateSerialEntryState();
+                RebuildDutEntries();
+                UpdateDutIndicators();
+                btnStart.Enabled = false;
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Serial number text changed: {ex.Message}");
+            }
+        }
+
+        private void UpdateSerialEntryState()
+        {
+            var allTxts = tlpDUT.Controls.OfType<TextBox>().ToList();
+            var serialCounts = allTxts
+                .Select(t => (t.Text ?? string.Empty).Trim())
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .GroupBy(text => text, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
+            int duplicateEntryCount = 0;
+            foreach (var textBox in allTxts)
+            {
+                string serialNumber = (textBox.Text ?? string.Empty).Trim();
+                bool isDuplicate = !string.IsNullOrWhiteSpace(serialNumber)
+                    && serialCounts.TryGetValue(serialNumber, out int count)
+                    && count > 1;
+
+                if (isDuplicate)
+                    duplicateEntryCount++;
+
+                textBox.BackColor = isDuplicate ? Color.Pink : Color.White;
+            }
+
+            if (duplicateEntryCount < _previousDuplicateEntryCount)
+                Shared.currentRunMetrics?.RecordDuplicateCorrection();
+
+            _previousDuplicateEntryCount = duplicateEntryCount;
+
+            bool allCompleteAndUnique = allTxts.Count > 0
+                && allTxts.All(t => !string.IsNullOrWhiteSpace((t.Text ?? string.Empty).Trim()) && t.BackColor == Color.White);
+
+            btnPretest.Enabled = allCompleteAndUnique;
+            if (!allCompleteAndUnique)
+                btnStart.Enabled = false;
+
+            if (Shared.currentRunMetrics != null)
+            {
+                if (allCompleteAndUnique && !_serialsCompleteAndUnique)
+                    Shared.currentRunMetrics.SerialEntryCompletedAt = DateTime.Now;
+                else if (!allCompleteAndUnique)
+                    Shared.currentRunMetrics.SerialEntryCompletedAt = null;
+            }
+
+            _serialsCompleteAndUnique = allCompleteAndUnique;
+        }
+
+        private void RebuildDutEntries()
+        {
+            DUTs.Clear();
+
+            foreach (var textBox in tlpDUT.Controls.OfType<TextBox>())
+            {
+                string serialNumber = (textBox.Text ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(serialNumber) || textBox.BackColor == Color.Pink || textBox.Tag == null)
+                    continue;
+
+                var tagParts = textBox.Tag.ToString().Split('_');
+                var dutType = tagParts[0] == "Base" ? DUTType.Base : DUTType.Remote;
+                var slot = int.Parse(tagParts[1]);
+
+                DUTs.Add(new DUTModel()
+                {
+                    DUTType = dutType,
+                    ReadyToTest = false,
+                    SerialNumber = serialNumber,
+                    Slot = slot,
+                    Tag = textBox.Tag.ToString(),
+                    ItemNumber = dutType == DUTType.Base
+                        ? Shared.sharedGeneralSettings.GeneralSettings[0].BASE_ITEM_NUMBER
+                        : Shared.sharedGeneralSettings.GeneralSettings[0].REMOTE_ITEM_NUMBER,
+                    ThermistorChannel = Shared.GetThermistorChannel(dutType, slot)
+                });
+            }
+        }
+
+        private void UpdateDutIndicators()
+        {
+            foreach (var pnl in tlpDUT.Controls.OfType<Panel>().ToList())
+            {
+                var dut = DUTs.Find(d => string.Equals(d.Tag, pnl.Tag?.ToString(), StringComparison.OrdinalIgnoreCase));
+                pnl.BackgroundImage = dut != null && dut.ReadyToTest ? Shared.PassImage : Shared.FailImage;
             }
         }
     }

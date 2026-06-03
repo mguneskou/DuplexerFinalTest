@@ -33,6 +33,14 @@ namespace DuplexerFinalTest.Equipment
             IsConnected = false;
         }
 
+        // Marks the link as stale after a runtime SCPI failure so Shared.ReconnectDisconnectedEquipment
+        // will actually reconnect on the next retry instead of trusting an out-of-date IsConnected flag.
+        private void MarkLinkLost()
+        {
+            try { _visa.CloseSession(); } catch { }
+            IsConnected = false;
+        }
+
         public string GetID()
         {
             return _visa.Query("*IDN?").Trim();
@@ -48,7 +56,7 @@ namespace DuplexerFinalTest.Equipment
                 Thread.Sleep(100);
                 return true;
             }
-            catch { return false; }
+            catch { MarkLinkLost(); return false; }
         }
 
         // SetSweepChannel and SetReadingChannel share the same full B2902A configuration
@@ -101,6 +109,11 @@ namespace DuplexerFinalTest.Equipment
                 {
                     _visa.Write($"SOUR{ch}:SWE:RANG AUTO");
                     _visa.Write($"SOUR{ch}:VOLT:RANG:AUTO ON");
+                    if (!settings.IsSourceRangeAuto)
+                    {
+                        _visa.Write($"SOUR{ch}:SWE:RANG FIX");
+                        _visa.Write($"SOUR{ch}:VOLT:RANG {F(settings.SourceRange)}");
+                    }
                 }
 
                 // ── Source function, initial value, compliance, sweep params ──
@@ -139,7 +152,11 @@ namespace DuplexerFinalTest.Equipment
                 if (!isCurrSource && !settings.IsMeasureRangeAuto)
                     _visa.Write($"SENS{ch}:CURR:RANG {F(settings.MeasureRange)}");
                 else
+                {
                     _visa.Write($"SENS{ch}:CURR:RANG:AUTO ON");
+                    if (settings.IsMeasureRangeAuto && settings.MeasureRange > 0)
+                        _visa.Write($"SENS{ch}:CURR:RANG:AUTO:LLIM {F(settings.MeasureRange)}");
+                }
                 _visa.Write($"TRIG{ch}:ACQ:DEL 0.0005");
 
                 // ── 4-wire (Kelvin) sense, output filter, high-cap off ────────
@@ -172,7 +189,7 @@ namespace DuplexerFinalTest.Equipment
 
                 return true;
             }
-            catch { return false; }
+            catch { MarkLinkLost(); return false; }
         }
 
         public bool InitiateReading(List<int> channels, SMUSettingsModel triggerSettings)
@@ -197,7 +214,7 @@ namespace DuplexerFinalTest.Equipment
 
                 return true;
             }
-            catch { return false; }
+            catch { MarkLinkLost(); return false; }
         }
 
         public bool ReadData(int ch, bool fromStart, int len, ref double[,] data, out int actrow)
@@ -217,7 +234,7 @@ namespace DuplexerFinalTest.Equipment
                 while (elapsed < timeout)
                 {
                     string opc = _visa.Query("*OPC?").Trim();
-                    if (opc == "1") break;
+                    if (opc == "1" || opc == "+1") break;  // IEEE 488.2 allows either format
                     Thread.Sleep(200);
                     elapsed += 200;
                 }
@@ -240,7 +257,7 @@ namespace DuplexerFinalTest.Equipment
                 }
                 return true;
             }
-            catch { actrow = 0; return false; }
+            catch { MarkLinkLost(); actrow = 0; return false; }
         }
 
         public bool CloseAllChannels()
@@ -251,7 +268,7 @@ namespace DuplexerFinalTest.Equipment
                 _visa.Write("OUTP2 OFF");
                 return true;
             }
-            catch { return false; }
+            catch { MarkLinkLost(); return false; }
         }
 
         // Formats a double for SCPI using InvariantCulture (e.g. "0.045" not "0,045")

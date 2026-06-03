@@ -6,6 +6,7 @@ using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -35,13 +36,15 @@ namespace DuplexerFinalTest.Helpers
         public static TestRun testRun { get; set; } = new TestRun();
         public static GeneralSettingsModel sharedGeneralSettings { get; set; }
         public static InfoModel infoModel { get; set; } = new InfoModel();
+        public static RunMetricsModel currentRunMetrics { get; set; } = new RunMetricsModel();
         public static TestResultSaver testResultSaver { get; set; } = new TestResultSaver();
         public static Tests.Pretest pretest { get; set; } = new Tests.Pretest();
 
         // Form references
         public static MainForm mainForm { get; set; }
         public static StartForm startForm { get; set; }
-        public static SettingsForm settingsForm { get; set; } = new SettingsForm();
+        // Do NOT instantiate UI forms during static initialization — create on demand.
+        public static SettingsForm settingsForm { get; set; }
 
         // Images
         public static Image ConnectedImage { get; set; }
@@ -188,10 +191,71 @@ namespace DuplexerFinalTest.Helpers
             });
         }
 
+        public static int ReconnectDisconnectedEquipment()
+        {
+            var s = sharedGeneralSettings?.GeneralSettings?.FirstOrDefault();
+            if (s == null || string.Equals(s.USE_SIMULATORS?.Trim(), "true", StringComparison.OrdinalIgnoreCase))
+                return 0;
+
+            int reconnectCount = 0;
+            reconnectCount += TryReconnect(OpticalSwitch1x4, s.OPTICAL_SWITCH1x4_1_RESOURCE);
+            reconnectCount += TryReconnect(OpticalSwitch1x13_Base, s.OPTICAL_SWITCH1x13_1_RESOURCE);
+            reconnectCount += TryReconnect(OpticalSwitch1x13_Remote, s.OPTICAL_SWITCH1x13_2_RESOURCE);
+            reconnectCount += TryReconnect(ElectricalSwitchBase1, s.ELECTRICAL_SWITCH1_RESOURCE);
+            reconnectCount += TryReconnect(ElectricalSwitchBase2, s.ELECTRICAL_SWITCH2_RESOURCE);
+            reconnectCount += TryReconnect(ElectricalSwitchBase3, s.ELECTRICAL_SWITCH3_RESOURCE);
+            reconnectCount += TryReconnect(ElectricalSwitchRemote1, s.ELECTRICAL_SWITCH4_RESOURCE);
+            reconnectCount += TryReconnect(ElectricalSwitchRemote2, s.ELECTRICAL_SWITCH5_RESOURCE);
+            reconnectCount += TryReconnect(ElectricalSwitchRemote3, s.ELECTRICAL_SWITCH6_RESOURCE);
+            reconnectCount += TryReconnect(SMU_master, s.SMU_MASTER_RESOURCE);
+            reconnectCount += TryReconnect(SMU_slave, s.SMU_SLAVE_RESOURCE);
+
+            int.TryParse(s.CLIMATIC_CHAMBER_PORT, out int chamberPort);
+            reconnectCount += TryReconnect(ClimaticChamber, s.CLIMATIC_CHAMBER_IP_ADDRESS, chamberPort > 0 ? chamberPort : 5000, s);
+
+            return reconnectCount;
+        }
+
         public static TestFlowModel ParseTestFlow(string fileName)
         {
             string json = File.ReadAllText(fileName);
             return JsonConvert.DeserializeObject<TestFlowModel>(json);
+        }
+
+        private static int TryReconnect(IOpticalSwitch equipment, string resource)
+        {
+            if (equipment == null || equipment.IsConnected || string.IsNullOrWhiteSpace(resource))
+                return 0;
+
+            return equipment.Connect(resource) ? 1 : 0;
+        }
+
+        private static int TryReconnect(IElectricalSwitch equipment, string resource)
+        {
+            if (equipment == null || equipment.IsConnected || string.IsNullOrWhiteSpace(resource))
+                return 0;
+
+            return equipment.Connect(resource) ? 1 : 0;
+        }
+
+        private static int TryReconnect(ISMU equipment, string resource)
+        {
+            if (equipment == null || equipment.IsConnected || string.IsNullOrWhiteSpace(resource))
+                return 0;
+
+            return equipment.Connect(resource) ? 1 : 0;
+        }
+
+        private static int TryReconnect(IClimaticChamber equipment, string ipAddress, int port, GeneralSetting settings)
+        {
+            if (equipment == null || equipment.IsConnected || string.IsNullOrWhiteSpace(ipAddress))
+                return 0;
+
+            bool connected = equipment.Connect(ipAddress, port);
+            if (connected && settings != null)
+                ApplyChamberProtectionLimits(settings);
+
+            return connected ? 1 : 0;
         }
 
         public static TestSequenceModel ParseTestSequence(string fileName)
@@ -247,17 +311,7 @@ namespace DuplexerFinalTest.Helpers
         {
             try
             {
-                string calFile = Path.Combine(resourcesFolder, "Calibration.json");
-                if (File.Exists(calFile))
-                {
-                    string json = File.ReadAllText(calFile);
-                    calibrationModel = JsonConvert.DeserializeObject<CalibrationModel>(json);
-                }
-                else
-                {
-                    calibrationModel = CreateDefaultCalibration();
-                    File.WriteAllText(calFile, JsonConvert.SerializeObject(calibrationModel, Formatting.Indented));
-                }
+                calibrationModel = LoadLatestCalibrationModel(null, resourcesFolder);
             }
             catch
             {
@@ -265,17 +319,233 @@ namespace DuplexerFinalTest.Helpers
             }
         }
 
+        public static string GetCalibrationRootPath(string preferredRoot = null)
+        {
+            var candidateRoots = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(preferredRoot))
+                candidateRoots.Add(preferredRoot);
+
+            string resultsRoot = sharedGeneralSettings?.GeneralSettings?[0]?.RESULTS_FOLDER;
+            if (!string.IsNullOrWhiteSpace(resultsRoot))
+            {
+                string suiteRoot = Path.GetDirectoryName(resultsRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (!string.IsNullOrWhiteSpace(suiteRoot))
+                    candidateRoots.Add(Path.Combine(suiteRoot, "Calibration"));
+            }
+
+            string resourcesRoot = sharedGeneralSettings?.GeneralSettings?[0]?.RESOURCES_FOLDER;
+            if (!string.IsNullOrWhiteSpace(resourcesRoot))
+            {
+                string suiteRoot = Path.GetDirectoryName(resourcesRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (!string.IsNullOrWhiteSpace(suiteRoot))
+                    candidateRoots.Add(Path.Combine(suiteRoot, "Calibration"));
+            }
+
+            candidateRoots.Add(@"P:\MGunes\DuplexerTestSuite\Calibration");
+            candidateRoots.Add(@"P:\MGunes\Duplexer\Calibration");
+
+            foreach (string candidateRoot in candidateRoots.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (Directory.Exists(candidateRoot))
+                    return candidateRoot;
+            }
+
+            return candidateRoots.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+        }
+
+        public static CalibrationModel LoadLatestCalibrationModel(DateTime? beforeTimestamp = null, string preferredRoot = null)
+        {
+            string calibrationRoot = GetCalibrationRootPath(preferredRoot);
+            if (string.IsNullOrWhiteSpace(calibrationRoot) || !Directory.Exists(calibrationRoot))
+                throw new DirectoryNotFoundException("Calibration folder was not found.");
+
+            List<CalibrationCandidate> candidates = EnumerateCalibrationCandidates(calibrationRoot);
+            if (candidates.Count == 0)
+                throw new FileNotFoundException($"No calibration files were found under '{calibrationRoot}'.");
+
+            CalibrationCandidate selectedCandidate;
+            if (beforeTimestamp.HasValue)
+            {
+                selectedCandidate = candidates
+                    .Where(candidate => candidate.Timestamp <= beforeTimestamp.Value)
+                    .OrderByDescending(candidate => candidate.Timestamp)
+                    .FirstOrDefault();
+
+                if (selectedCandidate == null)
+                {
+                    throw new FileNotFoundException(
+                        $"No calibration file was found earlier than {beforeTimestamp.Value:yyyy-MM-dd HH:mm:ss} in '{calibrationRoot}'.");
+                }
+            }
+            else
+            {
+                selectedCandidate = candidates
+                    .OrderByDescending(candidate => candidate.Timestamp)
+                    .First();
+            }
+
+            calibrationModel = ParseCalibrationFile(selectedCandidate.FilePath, selectedCandidate.Timestamp);
+            return calibrationModel;
+        }
+
+        public static double GetCalibrationValueForResultFile(string resultFilePath, TestSequences testSequence, int slot)
+        {
+            if (string.IsNullOrWhiteSpace(resultFilePath))
+                throw new ArgumentException("Result file path is required.", nameof(resultFilePath));
+
+            DateTime resultTimestamp = TryParseResultTimestamp(resultFilePath, out DateTime parsedTimestamp)
+                ? parsedTimestamp
+                : File.GetLastWriteTime(resultFilePath);
+
+            CalibrationModel model = LoadLatestCalibrationModel(resultTimestamp);
+            double calibrationValue = model.GetValue(testSequence, slot);
+            if (double.IsNaN(calibrationValue))
+            {
+                throw new InvalidOperationException(
+                    $"Calibration value is missing for {testSequence} slot {slot} in '{model.SourcePath}'.");
+            }
+
+            return calibrationValue;
+        }
+
         private static CalibrationModel CreateDefaultCalibration()
         {
             var model = new CalibrationModel();
-            for (int i = 1; i <= 12; i++)
+            for (int i = 1; i <= 24; i++)
             {
-                model.Base.Z_IB_IOP[$"Path{i}"] = 0.0;
-                model.Base.Z_IPD[$"Path{i}"] = 0.0;
-                model.Remote.Z_IOP[$"Path{i}"] = 0.0;
-                model.Remote.Z_VPV[$"Path{i}"] = 0.0;
+                model.Z_IB_IOP[$"path{i}"] = double.NaN;
+                model.Z_IPD[$"path{i}"] = double.NaN;
+                model.Z_IOP[$"path{i}"] = double.NaN;
+                model.Z_VPV[$"path{i}"] = double.NaN;
             }
             return model;
+        }
+
+        private static List<CalibrationCandidate> EnumerateCalibrationCandidates(string calibrationRoot)
+        {
+            var candidates = new List<CalibrationCandidate>();
+
+            foreach (string calibrationFile in Directory.GetFiles(calibrationRoot, "*.cal", SearchOption.TopDirectoryOnly))
+            {
+                if (TryParseCalibrationTimestamp(calibrationFile, out DateTime timestamp))
+                    candidates.Add(new CalibrationCandidate(calibrationFile, timestamp));
+            }
+
+            foreach (string calibrationDirectory in Directory.GetDirectories(calibrationRoot))
+            {
+                foreach (string calibrationFile in Directory.GetFiles(calibrationDirectory, "*.cal", SearchOption.TopDirectoryOnly))
+                {
+                    if (TryParseCalibrationTimestamp(calibrationFile, out DateTime timestamp))
+                        candidates.Add(new CalibrationCandidate(calibrationFile, timestamp));
+                }
+            }
+
+            return candidates;
+        }
+
+        private static CalibrationModel ParseCalibrationFile(string calibrationFilePath, DateTime effectiveTimestamp)
+        {
+            CalibrationModel model = CreateDefaultCalibration();
+            model.EffectiveTimestamp = effectiveTimestamp;
+            model.SourcePath = calibrationFilePath;
+
+            string currentSection = string.Empty;
+            foreach (string rawLine in File.ReadAllLines(calibrationFilePath))
+            {
+                string line = rawLine.Trim();
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith("!") || line.StartsWith(";"))
+                    continue;
+
+                if (line.StartsWith("[") && line.EndsWith("]"))
+                {
+                    currentSection = line.Substring(1, line.Length - 2).Trim();
+                    continue;
+                }
+
+                int equalsIndex = line.IndexOf('=');
+                if (equalsIndex < 0 || string.IsNullOrWhiteSpace(currentSection))
+                    continue;
+
+                string key = line.Substring(0, equalsIndex).Trim();
+                string valueText = line.Substring(equalsIndex + 1).Trim().Trim('"');
+                if (!double.TryParse(valueText, NumberStyles.Any, CultureInfo.InvariantCulture, out double value))
+                    continue;
+
+                Dictionary<string, double> section = GetCalibrationSection(model, currentSection);
+                if (section != null)
+                    section[key] = value;
+            }
+
+            return model;
+        }
+
+        private static Dictionary<string, double> GetCalibrationSection(CalibrationModel model, string sectionName)
+        {
+            switch (sectionName.ToUpperInvariant())
+            {
+                case "Z-IB-IOP":
+                    return model.Z_IB_IOP;
+                case "Z-IPD":
+                    return model.Z_IPD;
+                case "Z-IOP":
+                    return model.Z_IOP;
+                case "Z-VPV":
+                    return model.Z_VPV;
+                default:
+                    return null;
+            }
+        }
+
+        private static bool TryParseCalibrationTimestamp(string calibrationPath, out DateTime timestamp)
+        {
+            string[] candidates =
+            {
+                Path.GetFileNameWithoutExtension(calibrationPath),
+                Path.GetFileName(Path.GetDirectoryName(calibrationPath) ?? string.Empty)
+            };
+
+            foreach (string candidate in candidates)
+            {
+                if (DateTime.TryParseExact(candidate, "yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out timestamp))
+                {
+                    return true;
+                }
+            }
+
+            timestamp = DateTime.MinValue;
+            return false;
+        }
+
+        private static bool TryParseResultTimestamp(string resultFilePath, out DateTime timestamp)
+        {
+            string fileName = Path.GetFileNameWithoutExtension(resultFilePath);
+            Match match = Regex.Match(fileName, @"_(\d{8})_(\d{6})(?:_FAILED)?$", RegexOptions.IgnoreCase);
+            if (match.Success)
+            {
+                string token = $"{match.Groups[1].Value}_{match.Groups[2].Value}";
+                if (DateTime.TryParseExact(token, "yyyyMMdd_HHmmss", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out timestamp))
+                {
+                    return true;
+                }
+            }
+
+            timestamp = DateTime.MinValue;
+            return false;
+        }
+
+        private sealed class CalibrationCandidate
+        {
+            public CalibrationCandidate(string filePath, DateTime timestamp)
+            {
+                FilePath = filePath;
+                Timestamp = timestamp;
+            }
+
+            public string FilePath { get; }
+            public DateTime Timestamp { get; }
         }
 
         // ── Result file helpers (verbatim logic from reference) ──────────────
@@ -392,6 +662,8 @@ namespace DuplexerFinalTest.Helpers
         {
             string file = FindFileByTemperature(files, keyword, minTemp, maxTemp, sweepNo);
             if (string.IsNullOrEmpty(file)) return double.NaN;
+            double closestVal = double.NaN;
+            double minDiff = double.MaxValue;
             bool firstLine = true;
             foreach (var line in File.ReadAllLines(file))
             {
@@ -400,14 +672,16 @@ namespace DuplexerFinalTest.Helpers
                 if (parts.Length <= Math.Max(compareColIdx, resultColIdx)) continue;
                 if (!double.TryParse(parts[compareColIdx].Trim(), System.Globalization.NumberStyles.Any,
                     System.Globalization.CultureInfo.InvariantCulture, out double cmpVal)) continue;
-                if (Math.Abs(cmpVal - compareValue) < 1e-9)
+                double diff = Math.Abs(cmpVal - compareValue);
+                if (diff < minDiff)
                 {
+                    minDiff = diff;
                     if (double.TryParse(parts[resultColIdx].Trim(), System.Globalization.NumberStyles.Any,
                         System.Globalization.CultureInfo.InvariantCulture, out double resVal))
-                        return resVal;
+                        closestVal = resVal;
                 }
             }
-            return double.NaN;
+            return closestVal;
         }
     }
 }

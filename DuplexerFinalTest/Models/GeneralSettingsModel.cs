@@ -84,5 +84,8 @@ namespace DuplexerFinalTest.Models
         public string LOCAL_DATABASE_CONNECTION_STRING { get; set; }
         public string SAVE_RESULTS_TO_DB_AUTO { get; set; }
         public string ENABLE_DIAG_UI { get; set; }
+        // Simulator tuning parameters (optional)
+        public string SIM_PART_SPREAD_PCT { get; set; }
+        public string SIM_MEAS_NOISE_PCT { get; set; }
     }
 }

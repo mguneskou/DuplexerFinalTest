@@ -32,6 +32,14 @@ namespace DuplexerFinalTest.Equipment
             IsConnected = false;
         }
 
+        // Marks the link as stale after a runtime SCPI failure so Shared.ReconnectDisconnectedEquipment
+        // will actually reconnect on the next retry instead of trusting an out-of-date IsConnected flag.
+        private void MarkLinkLost()
+        {
+            try { _visa.CloseSession(); } catch { }
+            IsConnected = false;
+        }
+
         public string GetID()
         {
             return _visa.Query("*IDN?").Trim();
@@ -45,7 +53,7 @@ namespace DuplexerFinalTest.Equipment
                 Thread.Sleep(100);
                 return true;
             }
-            catch { return false; }
+            catch { MarkLinkLost(); return false; }
         }
 
         public bool CloseChannels(List<int> channels, bool openAllFirst = true)
@@ -64,7 +72,7 @@ namespace DuplexerFinalTest.Equipment
                 Thread.Sleep(50);
                 return true;
             }
-            catch { return false; }
+            catch { MarkLinkLost(); return false; }
         }
 
         public double MeasureTemperature(TemperatureMeasureMode mode, int channel)
@@ -94,7 +102,7 @@ namespace DuplexerFinalTest.Equipment
                 }
                 return double.NaN;
             }
-            catch { return double.NaN; }
+            catch { MarkLinkLost(); return double.NaN; }
         }
     }
 }

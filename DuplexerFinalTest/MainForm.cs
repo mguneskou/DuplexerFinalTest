@@ -62,7 +62,30 @@ namespace DuplexerFinalTest
             try
             {
                 Shared.GeneralSettingsPath = @"P:\MGunes\DuplexerTestSuite\Resources\Settings\SettingsGeneral.json";
-                Shared.sharedGeneralSettings = Shared.settingsForm.ReadGeneralSettings();
+                // Ensure the SettingsForm instance is created on the UI thread before use
+                if (Shared.settingsForm == null)
+                {
+                    try
+                    {
+                        Shared.settingsForm = new SettingsForm();
+                    }
+                    catch (Exception ex)
+                    {
+                        Shared.logger?.LogError("SettingsForm construction failed", ex);
+                        MessageBox.Show($"Settings form construction failed:\n{ex}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        throw;
+                    }
+                }
+                try
+                {
+                    Shared.sharedGeneralSettings = Shared.settingsForm.ReadGeneralSettings();
+                }
+                catch (Exception ex)
+                {
+                    Shared.logger?.LogError("Settings reading failed", ex);
+                    MessageBox.Show($"Settings reading failed:\n{ex}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    throw;
+                }
                 Shared.InitializeEquipment(Shared.sharedGeneralSettings);
 
                 // Configure "Save to Database" menu item based on auto-save setting
@@ -406,18 +429,39 @@ namespace DuplexerFinalTest
         {
             try
             {
-                var dir = Path.Combine(Application.StartupPath, "Resources", "Help");
-                if (Directory.Exists(dir))
-                {
-                    var helpFile = Directory.GetFiles(dir).ToList().Find(r => r.EndsWith(".pdf"));
-                    if (helpFile != null)
-                        Process.Start(new ProcessStartInfo { FileName = helpFile, UseShellExecute = true });
-                }
+                string dir = GetPreferredResourceDirectory("Help");
+                if (!Directory.Exists(dir))
+                    throw new DirectoryNotFoundException($"Help folder was not found: {dir}");
+
+                string helpFile = Directory.GetFiles(dir)
+                    .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault(path => path.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+                    ?? Directory.GetFiles(dir)
+                        .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+                        .FirstOrDefault(path => path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
+
+                if (string.IsNullOrWhiteSpace(helpFile))
+                    throw new FileNotFoundException($"No HTML or PDF help file was found in '{dir}'.");
+
+                Process.Start(new ProcessStartInfo { FileName = helpFile, UseShellExecute = true });
             }
             catch (Exception ex)
             {
                 Shared.logger?.Log($"Help: {ex.Message}", MessageType.Error);
             }
+        }
+
+        private string GetPreferredResourceDirectory(string subfolderName)
+        {
+            string resourcesRoot = Shared.sharedGeneralSettings?.GeneralSettings?[0]?.RESOURCES_FOLDER;
+            string configuredPath = string.IsNullOrWhiteSpace(resourcesRoot)
+                ? null
+                : Path.Combine(resourcesRoot, subfolderName);
+
+            if (!string.IsNullOrWhiteSpace(configuredPath) && Directory.Exists(configuredPath))
+                return configuredPath;
+
+            return Path.Combine(Application.StartupPath, "Resources", subfolderName);
         }
 
         private void MnuDiagnostics_Click(object sender, EventArgs e)
@@ -510,25 +554,16 @@ namespace DuplexerFinalTest
                 Shared.testTimer?.Stop();
                 timerElapsed.Stop();
 
-                // Compute overall pass/fail from result files before archiving
-                bool overallPassed = true;
-                try
-                {
-                    if (Directory.Exists(Shared.BaseResultsPath))
-                        overallPassed &= !Directory.GetFiles(Shared.BaseResultsPath)
-                            .Any(f => Path.GetFileName(f).Contains("FAIL"));
-                    if (Directory.Exists(Shared.RemoteResultsPath))
-                        overallPassed &= !Directory.GetFiles(Shared.RemoteResultsPath)
-                            .Any(f => Path.GetFileName(f).Contains("FAIL"));
-                }
-                catch { }
+                DateTime runCompletedAt = DateTime.Now;
+                bool overallPassed = EvaluateRunOverallPassFail(updateLiveResultFileNames: true);
+                WriteExcelTestReport(overallPassed, runCompletedAt);
 
                 bool autoSave = Shared.sharedGeneralSettings?.GeneralSettings[0]
                     .SAVE_RESULTS_TO_DB_AUTO?.Trim().ToLower() == "true";
 
                 if (autoSave)
                 {
-                    bool saved = SaveResultsToDatabase();
+                    bool saved = SaveResultsToDatabase(out overallPassed);
                     if (saved)
                         Shared.logger?.Log("Results saved to database automatically", MessageType.Success);
                     else
@@ -595,19 +630,256 @@ namespace DuplexerFinalTest
             }
         }
 
-        private bool SaveResultsToDatabase()
+        private void WriteExcelTestReport(bool overallPassed, DateTime runCompletedAt)
+        {
+            try
+            {
+                if (IsSimulationMode())
+                {
+                    int purgedRows = TestReportWorkbookWriter.PurgeSimulationRuns();
+                    if (purgedRows > 0)
+                        Shared.logger?.Log($"Removed {purgedRows} simulation row(s) from the Excel test report.", MessageType.Warning);
+
+                    Shared.logger?.Log("Excel test report skipped for simulation mode.", MessageType.Warning);
+                    return;
+                }
+
+                TestReportWorkbookData reportData = BuildExcelTestReportData(overallPassed, runCompletedAt);
+                TestReportWorkbookWriter.AppendRunReport(reportData);
+                Shared.logger?.Log($"Excel test report updated → {TestReportWorkbookWriter.WorkbookPath}", MessageType.Success);
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.Log($"Excel test report update failed: {ex.Message}", MessageType.Warning);
+            }
+        }
+
+        private TestReportWorkbookData BuildExcelTestReportData(bool overallPassed, DateTime runCompletedAt)
+        {
+            bool isSimulationMode = IsSimulationMode();
+            RunMetricsModel runMetrics = Shared.currentRunMetrics ?? new RunMetricsModel();
+            DateTime runStartedAt = GetCurrentRunStartTimestamp(runCompletedAt);
+            string runId = "RUN-" + runStartedAt.ToString("yyyyMMdd_HHmmssfff", CultureInfo.InvariantCulture);
+            int baseUnitCount = Shared.infoModel?.Test?.BaseDUTs?.Count ?? Shared.infoModel?.NumberOfBaseUnits ?? 0;
+            int remoteUnitCount = Shared.infoModel?.Test?.RemoteDUTs?.Count ?? Shared.infoModel?.NumberOfRemoteUnits ?? 0;
+            DateTime? calibrationTimestamp = Shared.calibrationModel != null && Shared.calibrationModel.EffectiveTimestamp > DateTime.MinValue
+                ? Shared.calibrationModel.EffectiveTimestamp
+                : (DateTime?)null;
+            double? calibrationAgeDays = calibrationTimestamp.HasValue
+                ? Math.Round((runCompletedAt - calibrationTimestamp.Value).TotalDays, 2)
+                : (double?)null;
+
+            var entries = new List<TestReportDutEntry>();
+            int totalSpecCount = 0;
+            int failedSpecCount = 0;
+            int passedDutCount = 0;
+            int failedDutCount = 0;
+
+            BuildExcelReportEntriesForGroup(
+                entries,
+                Shared.infoModel?.Test?.BaseDUTs,
+                Shared.BaseResultsPath,
+                "Base",
+                Shared.testSpecsBase,
+                (testID, files, slot) => ExtractBaseTestResults(testID, files, slot),
+                runId,
+                runStartedAt,
+                runCompletedAt,
+                overallPassed,
+                isSimulationMode,
+                calibrationTimestamp,
+                calibrationAgeDays,
+                baseUnitCount,
+                remoteUnitCount,
+                ref passedDutCount,
+                ref failedDutCount,
+                ref totalSpecCount,
+                ref failedSpecCount);
+
+            BuildExcelReportEntriesForGroup(
+                entries,
+                Shared.infoModel?.Test?.RemoteDUTs,
+                Shared.RemoteResultsPath,
+                "Remote",
+                Shared.testSpecsRemote,
+                (testID, files, slot) => ExtractRemoteTestResults(testID, files, slot),
+                runId,
+                runStartedAt,
+                runCompletedAt,
+                overallPassed,
+                isSimulationMode,
+                calibrationTimestamp,
+                calibrationAgeDays,
+                baseUnitCount,
+                remoteUnitCount,
+                ref passedDutCount,
+                ref failedDutCount,
+                ref totalSpecCount,
+                ref failedSpecCount);
+
+            return new TestReportWorkbookData()
+            {
+                Summary = new TestReportRunSummary()
+                {
+                    RunId = runId,
+                    RunStartedAt = runStartedAt,
+                    RunCompletedAt = runCompletedAt,
+                    SequenceName = Shared.infoModel?.Test?.SequenceName ?? string.Empty,
+                    SequenceRevision = Shared.infoModel?.Test?.Revision ?? string.Empty,
+                    OperatorName = Shared.infoModel?.Operator ?? string.Empty,
+                    TestRig = Environment.MachineName,
+                    SoftwareVersion = Shared.SoftwareVersion ?? string.Empty,
+                    IsSimulationMode = isSimulationMode,
+                    BaseUnitCount = baseUnitCount,
+                    RemoteUnitCount = remoteUnitCount,
+                    TotalDutCount = entries.Count,
+                    PassedDutCount = passedDutCount,
+                    FailedDutCount = failedDutCount,
+                    PassRatePercent = entries.Count > 0 ? Math.Round((double)passedDutCount * 100.0d / entries.Count, 2) : 0.0d,
+                    TotalSpecCount = totalSpecCount,
+                    FailedSpecCount = failedSpecCount,
+                    CalibrationTimestamp = calibrationTimestamp,
+                    CalibrationAgeDays = calibrationAgeDays,
+                    AverageChamberTemperatureErrorC = runMetrics.AverageChamberTemperatureErrorC,
+                    MaxChamberTemperatureDeviationC = runMetrics.MaxChamberTemperatureDeviationC,
+                    AverageSoakSettleMinutes = runMetrics.AverageSoakSettleMinutes,
+                    EquipmentRetryCount = runMetrics.EquipmentRetryCount,
+                    EquipmentReconnectCount = runMetrics.EquipmentReconnectCount,
+                    ForcedOperatorResumeCount = runMetrics.ForcedOperatorResumeCount,
+                    PretestFailedDutCount = runMetrics.PretestFailedDutCount,
+                    DuplicateScanCorrectionCount = runMetrics.DuplicateScanCorrectionCount,
+                    ScanCompleteToTestStartMinutes = runMetrics.ScanCompleteToTestStartMinutes,
+                    OverallPassed = overallPassed
+                },
+                Entries = entries
+            };
+        }
+
+        private void BuildExcelReportEntriesForGroup(
+            List<TestReportDutEntry> entries,
+            List<DUTModel> duts,
+            string resultsFolder,
+            string groupName,
+            List<FinalTestSpecModel> specs,
+            Func<int, List<FileInfo>, int, double> extractValue,
+            string runId,
+            DateTime runStartedAt,
+            DateTime runCompletedAt,
+            bool overallPassed,
+            bool isSimulationMode,
+            DateTime? calibrationTimestamp,
+            double? calibrationAgeDays,
+            int baseUnitCount,
+            int remoteUnitCount,
+            ref int passedDutCount,
+            ref int failedDutCount,
+            ref int totalSpecCount,
+            ref int failedSpecCount)
+        {
+            if (duts == null || duts.Count == 0)
+                return;
+
+            var di = new DirectoryInfo(resultsFolder ?? string.Empty);
+            var allResults = di.Exists ? di.GetFiles().ToList() : new List<FileInfo>();
+
+            foreach (var dut in duts)
+            {
+                var results = allResults.Where(file => file.Name.Contains(dut.SerialNumber)).ToList();
+                List<MeasManualTestModel> manualTestModels = new List<MeasManualTestModel>();
+                bool passed = isSimulationMode
+                    ? !results.Any(file => file.Name.Contains("FAIL"))
+                    : BuildManualTestModels(groupName, dut, results, specs, extractValue, out manualTestModels, false);
+
+                int dutFailedSpecCount = isSimulationMode ? 0 : manualTestModels.Count(model => !model.Passed);
+                int dutTotalSpecCount = isSimulationMode ? 0 : manualTestModels.Count;
+                string failedSpecIds = isSimulationMode
+                    ? string.Empty
+                    : string.Join(",", manualTestModels
+                        .Where(model => !model.Passed)
+                        .Select(model => model.TestID.ToString(CultureInfo.InvariantCulture)));
+
+                entries.Add(new TestReportDutEntry()
+                {
+                    RunId = runId,
+                    RunStartedAt = runStartedAt,
+                    RunCompletedAt = runCompletedAt,
+                    SequenceName = Shared.infoModel?.Test?.SequenceName ?? string.Empty,
+                    SequenceRevision = Shared.infoModel?.Test?.Revision ?? string.Empty,
+                    OperatorName = Shared.infoModel?.Operator ?? string.Empty,
+                    TestRig = Environment.MachineName,
+                    SoftwareVersion = Shared.SoftwareVersion ?? string.Empty,
+                    IsSimulationMode = isSimulationMode,
+                    CalibrationTimestamp = calibrationTimestamp,
+                    CalibrationAgeDays = calibrationAgeDays,
+                    DutType = groupName,
+                    Slot = dut.Slot,
+                    SerialNumber = dut.SerialNumber,
+                    Passed = passed,
+                    FailedSpecCount = dutFailedSpecCount,
+                    TotalSpecCount = dutTotalSpecCount,
+                    FailedSpecIds = failedSpecIds,
+                    ResultFileCount = results.Count,
+                    OverallRunResult = overallPassed ? "PASS" : "FAIL",
+                    BaseUnitCount = baseUnitCount,
+                    RemoteUnitCount = remoteUnitCount
+                });
+
+                if (passed)
+                    passedDutCount++;
+                else
+                    failedDutCount++;
+
+                totalSpecCount += dutTotalSpecCount;
+                failedSpecCount += dutFailedSpecCount;
+            }
+        }
+
+        private DateTime GetCurrentRunStartTimestamp(DateTime fallback)
+        {
+            string dateText = Shared.infoModel?.TestDate ?? string.Empty;
+            string timeText = Shared.infoModel?.TestTime ?? string.Empty;
+            string combined = string.Join(" ", new[] { dateText.Trim(), timeText.Trim() }.Where(part => !string.IsNullOrWhiteSpace(part)));
+            if (!string.IsNullOrWhiteSpace(combined)
+                && DateTime.TryParseExact(
+                    combined,
+                    new[] { "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd H:mm:ss" },
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out DateTime parsed))
+            {
+                return parsed;
+            }
+
+            return fallback;
+        }
+
+        private bool SaveResultsToDatabase(out bool overallPassed)
         {
             bool allSaved = true;
+            bool isSimulationMode = IsSimulationMode();
+            overallPassed = true;
 
             // ── Base DUTs ──────────────────────────────────────────────────────
             if (Shared.infoModel.Test.BaseDUTs?.Count > 0)
             {
                 var diBase = new DirectoryInfo(Shared.BaseResultsPath);
-                var allBaseResults = diBase.GetFiles().ToList();
-                foreach (var serialNo in Shared.infoModel.Test.BaseDUTs.Select(d => d.SerialNumber))
+                var allBaseResults = diBase.Exists ? diBase.GetFiles().ToList() : new System.Collections.Generic.List<FileInfo>();
+                foreach (var dut in Shared.infoModel.Test.BaseDUTs)
                 {
+                    string serialNo = dut.SerialNumber;
                     var results = allBaseResults.Where(a => a.Name.Contains(serialNo)).ToList();
-                    var passed = !results.Any(r => r.Name.Contains("FAIL"));
+                    bool specPassed = BuildManualTestModels(
+                        "Base",
+                        dut,
+                        results,
+                        Shared.testSpecsBase,
+                        (testID, files, slot) => ExtractBaseTestResults(testID, files, slot),
+                        out System.Collections.Generic.List<MeasManualTestModel> manualTestModels);
+
+                    bool passed = isSimulationMode
+                        ? !results.Any(r => r.Name.Contains("FAIL"))
+                        : specPassed;
+                    overallPassed &= passed;
 
                     var measMainModel = new MeasMainModel()
                     {
@@ -623,38 +895,10 @@ namespace DuplexerFinalTest
                         Passed = passed
                     };
 
-                    var manualTestModels = new System.Collections.Generic.List<MeasManualTestModel>();
-                    Shared.logger?.Log($"Base specs for {serialNo}: {Shared.testSpecsBase?.Count ?? 0} specs, {results.Count} result files");
-                    if (Shared.testSpecsBase != null)
-                    {
-                        foreach (var spec in Shared.testSpecsBase)
-                        {
-                            try
-                            {
-                                double testData = ExtractBaseTestResults(spec.TestID, results);
-                                bool rowPassed = EvaluateLimit(testData, spec.LimitMin, spec.LimitMax);
-                                Shared.logger?.Log($"  Base TestID={spec.TestID} value={testData:G6} pass={rowPassed} [{spec.LimitMin}..{spec.LimitMax}]");
-                                manualTestModels.Add(new MeasManualTestModel()
-                                {
-                                    TestID = spec.TestID,
-                                    TestData = testData,
-                                    Passed = rowPassed
-                                });
-                            }
-                            catch (Exception ex)
-                            {
-                                Shared.logger?.Log($"ExtractBaseTestResults TestID={spec.TestID}: {ex.Message}", MessageType.Warning);
-                            }
-                        }
-                    }
-
                     if (!Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels))
                         allSaved = false;
 
-                    // Archive result files for this serial
-                    Directory.CreateDirectory(Path.Combine(Shared.BaseResultsPath, "Archive"));
-                    foreach (var result in results)
-                        File.Move(result.FullName, Path.Combine(Shared.BaseResultsPath, "Archive", result.Name), true);
+                    ArchiveResultFiles(Path.Combine(Shared.BaseResultsPath, "Archive"), results, passed, isSimulationMode);
                 }
             }
 
@@ -662,11 +906,23 @@ namespace DuplexerFinalTest
             if (Shared.infoModel.Test.RemoteDUTs?.Count > 0)
             {
                 var diRemote = new DirectoryInfo(Shared.RemoteResultsPath);
-                var allRemoteResults = diRemote.GetFiles().ToList();
-                foreach (var serialNo in Shared.infoModel.Test.RemoteDUTs.Select(d => d.SerialNumber))
+                var allRemoteResults = diRemote.Exists ? diRemote.GetFiles().ToList() : new System.Collections.Generic.List<FileInfo>();
+                foreach (var dut in Shared.infoModel.Test.RemoteDUTs)
                 {
+                    string serialNo = dut.SerialNumber;
                     var results = allRemoteResults.Where(a => a.Name.Contains(serialNo)).ToList();
-                    var passed = !results.Any(r => r.Name.Contains("FAIL"));
+                    bool specPassed = BuildManualTestModels(
+                        "Remote",
+                        dut,
+                        results,
+                        Shared.testSpecsRemote,
+                        (testID, files, slot) => ExtractRemoteTestResults(testID, files, slot),
+                        out System.Collections.Generic.List<MeasManualTestModel> manualTestModels);
+
+                    bool passed = isSimulationMode
+                        ? !results.Any(r => r.Name.Contains("FAIL"))
+                        : specPassed;
+                    overallPassed &= passed;
 
                     var measMainModel = new MeasMainModel()
                     {
@@ -682,38 +938,10 @@ namespace DuplexerFinalTest
                         Passed = passed
                     };
 
-                    var manualTestModels = new System.Collections.Generic.List<MeasManualTestModel>();
-                    Shared.logger?.Log($"Remote specs for {serialNo}: {Shared.testSpecsRemote?.Count ?? 0} specs, {results.Count} result files");
-                    if (Shared.testSpecsRemote != null)
-                    {
-                        foreach (var spec in Shared.testSpecsRemote)
-                        {
-                            try
-                            {
-                                double testData = ExtractRemoteTestResults(spec.TestID, results);
-                                bool rowPassed = EvaluateLimit(testData, spec.LimitMin, spec.LimitMax);
-                                Shared.logger?.Log($"  Remote TestID={spec.TestID} value={testData:G6} pass={rowPassed} [{spec.LimitMin}..{spec.LimitMax}]");
-                                manualTestModels.Add(new MeasManualTestModel()
-                                {
-                                    TestID = spec.TestID,
-                                    TestData = testData,
-                                    Passed = rowPassed
-                                });
-                            }
-                            catch (Exception ex)
-                            {
-                                Shared.logger?.Log($"ExtractRemoteTestResults TestID={spec.TestID}: {ex.Message}", MessageType.Warning);
-                            }
-                        }
-                    }
-
                     if (!Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels))
                         allSaved = false;
 
-                    // Archive result files for this serial
-                    Directory.CreateDirectory(Path.Combine(Shared.RemoteResultsPath, "Archive"));
-                    foreach (var result in results)
-                        File.Move(result.FullName, Path.Combine(Shared.RemoteResultsPath, "Archive", result.Name), true);
+                    ArchiveResultFiles(Path.Combine(Shared.RemoteResultsPath, "Archive"), results, passed, isSimulationMode);
                 }
             }
             return allSaved;
@@ -724,12 +952,13 @@ namespace DuplexerFinalTest
             try
             {
                 mnuSaveToDatabase.Enabled = false;
-                bool saved = SaveResultsToDatabase();
+                bool saved = SaveResultsToDatabase(out bool overallPassed);
                 if (saved)
                     Shared.logger?.Log("Results saved to database manually", MessageType.Success);
                 else
                     Shared.logger?.Log("DB manual save: one or more DUTs failed to save — see error(s) above", MessageType.Warning);
                 mnuSaveToDatabase.Visible = false;
+                ShowTestResult(overallPassed);
             }
             catch (Exception ex)
             {
@@ -751,6 +980,9 @@ namespace DuplexerFinalTest
         /// </summary>
         private static bool EvaluateLimit(double value, double limitMin, double limitMax)
         {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                return false;
+
             if (limitMin != 0 && limitMax != 0)
                 return value >= limitMin && value <= limitMax;
             if (limitMin == 0 && limitMax != 0)
@@ -760,7 +992,212 @@ namespace DuplexerFinalTest
             return true; // both 0 → no validation
         }
 
-        private double ExtractBaseTestResults(int testID, List<System.IO.FileInfo> resultFiles)
+        private bool EvaluateRunOverallPassFail(bool updateLiveResultFileNames = false)
+        {
+            try
+            {
+                if (IsSimulationMode())
+                    return EvaluateRunOverallPassFailFromResultFiles();
+
+                bool overallPassed = true;
+
+                if (Shared.infoModel.Test.BaseDUTs?.Count > 0)
+                {
+                    var diBase = new DirectoryInfo(Shared.BaseResultsPath);
+                    var allBaseResults = diBase.Exists ? diBase.GetFiles().ToList() : new System.Collections.Generic.List<FileInfo>();
+                    foreach (var dut in Shared.infoModel.Test.BaseDUTs)
+                    {
+                        var results = allBaseResults.Where(file => file.Name.Contains(dut.SerialNumber)).ToList();
+                        bool dutPassed = BuildManualTestModels(
+                            "Base",
+                            dut,
+                            results,
+                            Shared.testSpecsBase,
+                            (testID, files, slot) => ExtractBaseTestResults(testID, files, slot),
+                            out _);
+                        if (updateLiveResultFileNames)
+                            UpdateLiveResultFiles(results, dutPassed, false);
+                        overallPassed &= dutPassed;
+                    }
+                }
+
+                if (Shared.infoModel.Test.RemoteDUTs?.Count > 0)
+                {
+                    var diRemote = new DirectoryInfo(Shared.RemoteResultsPath);
+                    var allRemoteResults = diRemote.Exists ? diRemote.GetFiles().ToList() : new System.Collections.Generic.List<FileInfo>();
+                    foreach (var dut in Shared.infoModel.Test.RemoteDUTs)
+                    {
+                        var results = allRemoteResults.Where(file => file.Name.Contains(dut.SerialNumber)).ToList();
+                        bool dutPassed = BuildManualTestModels(
+                            "Remote",
+                            dut,
+                            results,
+                            Shared.testSpecsRemote,
+                            (testID, files, slot) => ExtractRemoteTestResults(testID, files, slot),
+                            out _);
+                        if (updateLiveResultFileNames)
+                            UpdateLiveResultFiles(results, dutPassed, false);
+                        overallPassed &= dutPassed;
+                    }
+                }
+
+                return overallPassed;
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.Log($"Spec-based pass/fail evaluation failed: {ex.Message}", MessageType.Error);
+                return false;
+            }
+        }
+
+        private bool EvaluateRunOverallPassFailFromResultFiles()
+        {
+            bool overallPassed = true;
+            try
+            {
+                if (Directory.Exists(Shared.BaseResultsPath))
+                    overallPassed &= !Directory.GetFiles(Shared.BaseResultsPath)
+                        .Any(f => Path.GetFileName(f).Contains("FAIL"));
+                if (Directory.Exists(Shared.RemoteResultsPath))
+                    overallPassed &= !Directory.GetFiles(Shared.RemoteResultsPath)
+                        .Any(f => Path.GetFileName(f).Contains("FAIL"));
+            }
+            catch { }
+
+            return overallPassed;
+        }
+
+        private bool BuildManualTestModels(
+            string groupName,
+            DUTModel dut,
+            System.Collections.Generic.List<FileInfo> resultFiles,
+            System.Collections.Generic.List<FinalTestSpecModel> specs,
+            Func<int, System.Collections.Generic.List<FileInfo>, int, double> extractValue,
+            out System.Collections.Generic.List<MeasManualTestModel> manualTestModels,
+            bool logDetails = true)
+        {
+            manualTestModels = new System.Collections.Generic.List<MeasManualTestModel>();
+
+            if (resultFiles == null || resultFiles.Count == 0)
+            {
+                if (logDetails)
+                    Shared.logger?.Log($"{groupName} DUT {dut?.SerialNumber}: no result files were found for spec evaluation.", MessageType.Warning);
+                return false;
+            }
+
+            if (specs == null || specs.Count == 0)
+            {
+                if (logDetails)
+                    Shared.logger?.Log($"{groupName} DUT {dut?.SerialNumber}: no database specs are loaded, so pass/fail cannot be evaluated.", MessageType.Warning);
+                return false;
+            }
+
+            bool passed = true;
+            if (logDetails)
+                Shared.logger?.Log($"{groupName} specs for {dut.SerialNumber}: {specs.Count} specs, {resultFiles.Count} result files");
+
+            foreach (var spec in specs)
+            {
+                double testData = double.NaN;
+                bool rowPassed = false;
+
+                try
+                {
+                    testData = extractValue(spec.TestID, resultFiles, dut.Slot);
+                    rowPassed = EvaluateLimit(testData, spec.LimitMin, spec.LimitMax);
+                }
+                catch (Exception ex)
+                {
+                    if (logDetails)
+                        Shared.logger?.Log($"Extract{groupName}TestResults TestID={spec.TestID}: {ex.Message}", MessageType.Warning);
+                }
+
+                if (logDetails)
+                {
+                    Shared.logger?.Log(
+                        $"  {groupName} TestID={spec.TestID} value={(double.IsNaN(testData) || double.IsInfinity(testData) ? "NaN" : testData.ToString("G6"))} pass={rowPassed} [{spec.LimitMin}..{spec.LimitMax}]");
+                }
+
+                manualTestModels.Add(new MeasManualTestModel()
+                {
+                    TestID = spec.TestID,
+                    TestData = testData,
+                    Passed = rowPassed
+                });
+
+                passed &= rowPassed;
+            }
+
+            return passed;
+        }
+
+        private void ArchiveResultFiles(string archiveFolder, System.Collections.Generic.List<FileInfo> resultFiles, bool passed, bool isSimulationMode)
+        {
+            Directory.CreateDirectory(archiveFolder);
+
+            foreach (var result in resultFiles)
+            {
+                string archivedFileName = BuildResultFileNameWithSpecOutcome(result.Name, passed, isSimulationMode);
+                File.Move(result.FullName, Path.Combine(archiveFolder, archivedFileName), true);
+            }
+        }
+
+        private void UpdateLiveResultFiles(System.Collections.Generic.List<FileInfo> resultFiles, bool passed, bool isSimulationMode)
+        {
+            foreach (var result in resultFiles)
+            {
+                string updatedFileName = BuildResultFileNameWithSpecOutcome(result.Name, passed, isSimulationMode);
+                if (string.Equals(updatedFileName, result.Name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string directoryPath = result.DirectoryName ?? Path.GetDirectoryName(result.FullName) ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(directoryPath))
+                    continue;
+
+                File.Move(result.FullName, Path.Combine(directoryPath, updatedFileName), true);
+            }
+        }
+
+        private string BuildResultFileNameWithSpecOutcome(string originalFileName, bool passed, bool isSimulationMode)
+        {
+            if (string.IsNullOrWhiteSpace(originalFileName))
+                return originalFileName;
+
+            if (isSimulationMode || passed || originalFileName.Contains("_FAILED"))
+                return originalFileName;
+
+            string extension = Path.GetExtension(originalFileName);
+            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(originalFileName);
+            return $"{fileNameWithoutExtension}_FAILED{extension}";
+        }
+
+        private bool IsSimulationMode()
+        {
+            return Shared.sharedGeneralSettings?.GeneralSettings[0]
+                .USE_SIMULATORS?.Trim().ToLower() == "true";
+        }
+
+        private double ExtractBaseZIpdValue(List<System.IO.FileInfo> resultFiles, double minTemp, double maxTemp, int sweepNo, int slot)
+        {
+            string resultFile = Shared.FindFileByTemperature(resultFiles, "Z_IPD", minTemp, maxTemp, sweepNo);
+            double calibrationValue = Shared.GetCalibrationValueForResultFile(resultFile, TestSequences.Base_Z_IPD, slot);
+            return Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", minTemp, maxTemp, 1, calibrationValue, 4, sweepNo) * 1000.0d;
+        }
+
+        private double ExtractRemoteZVpvValue(List<System.IO.FileInfo> resultFiles, double minTemp, double maxTemp, int sweepNo, int slot, bool returnCurrent)
+        {
+            const double loadRes = 13000.0d;
+
+            string resultFile = Shared.FindFileByTemperature(resultFiles, "Z_VPV", minTemp, maxTemp, sweepNo);
+            double calibrationValue = Shared.GetCalibrationValueForResultFile(resultFile, TestSequences.Remote_Z_VPV, slot);
+            double vpv = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", minTemp, maxTemp, sweepNo, 1, calibrationValue, 3);
+            if (returnCurrent)
+                return vpv / loadRes * 100000.0d;
+
+            return (vpv * vpv) / loadRes * 10000.0d;
+        }
+
+        private double ExtractBaseTestResults(int testID, List<System.IO.FileInfo> resultFiles, int slot)
         {
             try
             {
@@ -778,7 +1215,7 @@ namespace DuplexerFinalTest
                     case 1666:
                         { var f = Shared.FindFileByTemperature(resultFiles, "Z_IB_IOP", -60.5, -49.5, 2); value = Shared.FindReadingByClosestValue(f, "CH1 Current(A)", "CH2 Current(A)", 0.045) * 1000000.0d; break; }
                     case 1667:
-                        { value = Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", -60.5, -49.5, 1, 0.002, 4, 2) * 1000.0d; break; }
+                        { value = ExtractBaseZIpdValue(resultFiles, -60.5, -49.5, 2, slot); break; }
                     case 1668:
                         { var f = Shared.FindFileByTemperature(resultFiles, "Z_IB_IOP", -60.5, -49.5, 2); value = Shared.FindReadingByClosestValue(f, "CH1 Current(A)", "CH4 Power(W)", 0.035) * 1000.0d; break; }
                     case 1669:
@@ -790,7 +1227,7 @@ namespace DuplexerFinalTest
                     case 1672:
                         { var f = Shared.FindFileByTemperature(resultFiles, "Z_IB_IOP", 76.5, 93.5, 3); value = Shared.FindReadingByClosestValue(f, "CH1 Current(A)", "CH2 Current(A)", 0.045); break; }
                     case 1673:
-                        { value = Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", 76.5, 93.5, 1, 0.002, 4, 3) * 1000.0d; break; }
+                        { value = ExtractBaseZIpdValue(resultFiles, 76.5, 93.5, 3, slot); break; }
                     case 1674:
                         { var f = Shared.FindFileByTemperature(resultFiles, "Z_IB_IOP", 76.5, 93.5, 3); value = Shared.FindReadingByClosestValue(f, "CH1 Current(A)", "CH4 Power(W)", 0.035) * 1000.0d; break; }
                     case 1675:
@@ -836,15 +1273,15 @@ namespace DuplexerFinalTest
                     case 1847:
                         { var f = Shared.FindFileByTemperature(resultFiles, "Z_IB_IOP", 22.5, 27.5, 8); value = Shared.FindReadingByClosestValue(f, "CH1 Current(A)", "CH2 Current(A)", 0.045) * 1000000.0d; break; }
                     case 1848:
-                        { value = Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", -60.5, -49.5, 1, 0.002, 4, 4) * 1000.0d; break; }
+                        { value = ExtractBaseZIpdValue(resultFiles, -60.5, -49.5, 4, slot); break; }
                     case 1849:
-                        { value = Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", 76.5, 93.5, 1, 0.002, 4, 5) * 1000.0d; break; }
+                        { value = ExtractBaseZIpdValue(resultFiles, 76.5, 93.5, 5, slot); break; }
                     case 1850:
-                        { value = Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", -60.5, -49.5, 1, 0.002, 4, 6) * 1000.0d; break; }
+                        { value = ExtractBaseZIpdValue(resultFiles, -60.5, -49.5, 6, slot); break; }
                     case 1851:
-                        { value = Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", 76.5, 93.5, 1, 0.002, 4, 7) * 1000.0d; break; }
+                        { value = ExtractBaseZIpdValue(resultFiles, 76.5, 93.5, 7, slot); break; }
                     case 1852:
-                        { value = Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", 22.5, 27.5, 1, 0.002, 4, 8) * 1000.0d; break; }
+                        { value = ExtractBaseZIpdValue(resultFiles, 22.5, 27.5, 8, slot); break; }
                     case 1853:
                         { var f = Shared.FindFileByTemperature(resultFiles, "Z_IB_IOP", -60.5, -49.5, 4); value = Shared.FindReadingByClosestValue(f, "CH1 Current(A)", "CH4 Power(W)", 0.035) * 1000.0d; break; }
                     case 1854:
@@ -874,7 +1311,7 @@ namespace DuplexerFinalTest
                     case 2192:
                         { var f = Shared.FindFileByTemperature(resultFiles, "Z_IB_IOP", -27.5, -22.5, 1); value = Shared.FindReadingByClosestValue(f, "CH1 Current(A)", "CH2 Current(A)", 0.045) * 1000000.0d; break; }
                     case 2193:
-                        { value = Shared.Extract_Z_IPD_Value(resultFiles, "Z_IPD", -27.5, -22.5, 1, 0.002, 4, 1) * 1000.0d; break; }
+                        { value = ExtractBaseZIpdValue(resultFiles, -27.5, -22.5, 1, slot); break; }
                     case 2194:
                         { var f = Shared.FindFileByTemperature(resultFiles, "Z_IB_IOP", -27.5, -22.5, 1); value = Shared.FindReadingByClosestValue(f, "CH1 Current(A)", "CH4 Power(W)", 0.035) * 1000.0d; break; }
                     case 2195:
@@ -888,19 +1325,17 @@ namespace DuplexerFinalTest
             }
         }
 
-        private double ExtractRemoteTestResults(int testID, List<System.IO.FileInfo> resultFiles)
+        private double ExtractRemoteTestResults(int testID, List<System.IO.FileInfo> resultFiles, int slot)
         {
             try
             {
-                const double loadRes = 13000;
-                const double calValue = 0.03d;
                 double value = 0;
                 switch (testID)
                 {
-                    case 1648: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", -60.5, -49.5, 2, 1, calValue, 3); value = VPV / loadRes * 100000; break; }
-                    case 1649: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", -60.5, -49.5, 2, 1, calValue, 3); value = (VPV * VPV) / loadRes * 10000; break; }
-                    case 1654: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", 76.5, 93.5, 3, 1, calValue, 3); value = VPV / loadRes * 100000; break; }
-                    case 1655: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", 76.5, 93.5, 3, 1, calValue, 3); value = (VPV * VPV) / loadRes * 10000; break; }
+                    case 1648: { value = ExtractRemoteZVpvValue(resultFiles, -60.5, -49.5, 2, slot, true); break; }
+                    case 1649: { value = ExtractRemoteZVpvValue(resultFiles, -60.5, -49.5, 2, slot, false); break; }
+                    case 1654: { value = ExtractRemoteZVpvValue(resultFiles, 76.5, 93.5, 3, slot, true); break; }
+                    case 1655: { value = ExtractRemoteZVpvValue(resultFiles, 76.5, 93.5, 3, slot, false); break; }
                     case 1751: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -60.5, -49.5, 2, 1, 0.002, 0); break; }
                     case 1752: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -60.5, -49.5, 2, 1, 0.003, 0); break; }
                     case 1753: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", 76.5, 93.5, 3, 1, 0.002, 0); break; }
@@ -909,16 +1344,16 @@ namespace DuplexerFinalTest
                     case 1772: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -60.5, -49.5, 2, 1, 0.003, 6) * 1000000.0d; break; }
                     case 1773: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", 76.5, 93.5, 3, 1, 0.002, 6) * 1000000.0d; break; }
                     case 1774: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", 76.5, 93.5, 3, 1, 0.003, 6) * 1000000.0d; break; }
-                    case 1790: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", -60.5, -49.5, 4, 1, calValue, 3); value = (VPV * VPV) / loadRes * 10000; break; }
-                    case 1791: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", 76.5, 93.5, 5, 1, calValue, 3); value = (VPV * VPV) / loadRes * 10000; break; }
-                    case 1792: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", -60.5, -49.5, 6, 1, calValue, 3); value = (VPV * VPV) / loadRes * 10000; break; }
-                    case 1793: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", 76.5, 93.5, 7, 1, calValue, 3); value = (VPV * VPV) / loadRes * 10000; break; }
-                    case 1794: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", 22.5, 27.5, 8, 1, calValue, 3); value = (VPV * VPV) / loadRes * 10000; break; }
-                    case 1795: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", -60.5, -49.5, 4, 1, calValue, 3); value = VPV / loadRes * 100000; break; }
-                    case 1796: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", 76.5, 93.5, 5, 1, calValue, 3); value = VPV / loadRes * 100000; break; }
-                    case 1797: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", -60.5, -49.5, 6, 1, calValue, 3); value = VPV / loadRes * 100000; break; }
-                    case 1798: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", 76.5, 93.5, 7, 1, calValue, 3); value = VPV / loadRes * 100000; break; }
-                    case 1799: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", 22.5, 27.5, 8, 1, calValue, 3); value = VPV / loadRes * 100000; break; }
+                    case 1790: { value = ExtractRemoteZVpvValue(resultFiles, -60.5, -49.5, 4, slot, false); break; }
+                    case 1791: { value = ExtractRemoteZVpvValue(resultFiles, 76.5, 93.5, 5, slot, false); break; }
+                    case 1792: { value = ExtractRemoteZVpvValue(resultFiles, -60.5, -49.5, 6, slot, false); break; }
+                    case 1793: { value = ExtractRemoteZVpvValue(resultFiles, 76.5, 93.5, 7, slot, false); break; }
+                    case 1794: { value = ExtractRemoteZVpvValue(resultFiles, 22.5, 27.5, 8, slot, false); break; }
+                    case 1795: { value = ExtractRemoteZVpvValue(resultFiles, -60.5, -49.5, 4, slot, true); break; }
+                    case 1796: { value = ExtractRemoteZVpvValue(resultFiles, 76.5, 93.5, 5, slot, true); break; }
+                    case 1797: { value = ExtractRemoteZVpvValue(resultFiles, -60.5, -49.5, 6, slot, true); break; }
+                    case 1798: { value = ExtractRemoteZVpvValue(resultFiles, 76.5, 93.5, 7, slot, true); break; }
+                    case 1799: { value = ExtractRemoteZVpvValue(resultFiles, 22.5, 27.5, 8, slot, true); break; }
                     case 1800: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -60.5, -49.5, 4, 1, 0.002, 6) * 1000000.0d; break; }
                     case 1801: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", 76.5, 93.5, 5, 1, 0.002, 6) * 1000000.0d; break; }
                     case 1802: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -60.5, -49.5, 6, 1, 0.002, 6) * 1000000.0d; break; }
@@ -948,10 +1383,10 @@ namespace DuplexerFinalTest
                     case 1827: { value = ExtractThresholdCurrent(resultFiles, "Z_IOP", 22.5, 27.5); break; }
                     case 2221: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -27.5, -22.5, 1, 1, 0.002, 0); break; }
                     case 2222: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -27.5, -22.5, 1, 1, 0.003, 0); break; }
-                    case 2223: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", -27.5, -22.5, 1, 1, calValue, 3); value = (VPV * VPV) / loadRes * 10000; break; }
+                    case 2223: { value = ExtractRemoteZVpvValue(resultFiles, -27.5, -22.5, 1, slot, false); break; }
                     case 2224: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -27.5, -22.5, 1, 1, 0.002, 6) * 1000000.0d; break; }
                     case 2225: { value = Shared.ExtractRemoteZIOP(resultFiles, "Z_IOP", -27.5, -22.5, 1, 1, 0.003, 6) * 1000000.0d; break; }
-                    case 2226: { var VPV = Shared.ExtractRemoteVPV(resultFiles, "Z_VPV", -27.5, -22.5, 1, 1, calValue, 3); value = VPV / loadRes * 100000; break; }
+                    case 2226: { value = ExtractRemoteZVpvValue(resultFiles, -27.5, -22.5, 1, slot, true); break; }
                     case 2227: { value = ExtractThresholdCurrent(resultFiles, "Z_IOP", -27.5, -22.5); break; }
                 }
                 return value;

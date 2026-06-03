@@ -62,10 +62,14 @@ namespace DuplexerFinalTest
                 chkUseLocalDatabase.Checked = IsTrue(s.USE_LOCAL_DATABASE);
                 txtConnectionString.Text    = s.LOCAL_DATABASE_CONNECTION_STRING;
                 chkSaveAuto.Checked         = IsTrue(s.SAVE_RESULTS_TO_DB_AUTO);
+                // Simulator tuning
+                txtSimPartSpread.Text       = s.SIM_PART_SPREAD_PCT ?? "1.0";
+                txtSimMeasNoise.Text        = s.SIM_MEAS_NOISE_PCT ?? "0.05";
             }
             catch (Exception ex)
             {
-                Shared.logger?.Log($"Settings form load: {ex.Message}", MessageType.Error);
+                Shared.logger?.LogError("Settings form load failed", ex);
+                MessageBox.Show($"Settings form load failed:\n{ex}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -129,6 +133,8 @@ namespace DuplexerFinalTest
                     USE_LOCAL_DATABASE               = BoolStr(chkUseLocalDatabase.Checked),
                     LOCAL_DATABASE_CONNECTION_STRING = txtConnectionString.Text.Trim(),
                     SAVE_RESULTS_TO_DB_AUTO          = BoolStr(chkSaveAuto.Checked),
+                    SIM_PART_SPREAD_PCT              = txtSimPartSpread.Text.Trim(),
+                    SIM_MEAS_NOISE_PCT               = txtSimMeasNoise.Text.Trim(),
                 });
 
                 WriteGeneralSettings(model);

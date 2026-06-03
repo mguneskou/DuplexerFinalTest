@@ -61,6 +61,8 @@ namespace DuplexerFinalTest.Equipment
         // These mirror the front-panel "Temperature Protection" settings and are applied once
         // on connect so they always match the software safety limits plus a configured margin.
         bool SetTemperatureProtection(double highLimit, double lowLimit);
+        // Queries the chamber program monitor (PRGM MON?) to get current step and run status.
+        Models.ChamberProgramMonitorModel GetProgramMonitor();
         Models.ChamberTemperatureModel currentTemperature { get; set; }
     }
 }

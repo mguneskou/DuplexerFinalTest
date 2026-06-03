@@ -276,16 +276,18 @@ namespace DuplexerFinalTest
             this.tabDatabase.Text     = "  Database && Simulation  ";
             this.tabDatabase.UseVisualStyleBackColor = true;
 
-            // tlpDatabase — 2 cols (30 % | 70 %), 4 rows (25 % each), Dock=Fill
+            // tlpDatabase — 2 cols (30 % | 70 %), 6 rows (approx), Dock=Fill
             this.tlpDatabase.Dock        = System.Windows.Forms.DockStyle.Fill;
             this.tlpDatabase.ColumnCount = 2;
             this.tlpDatabase.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 30F));
             this.tlpDatabase.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 70F));
-            this.tlpDatabase.RowCount    = 4;
-            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25F));
-            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25F));
-            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25F));
-            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25F));
+            this.tlpDatabase.RowCount    = 6;
+            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 16.66F));
+            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 16.66F));
+            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 16.66F));
+            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 16.66F));
+            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 16.66F));
+            this.tlpDatabase.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 16.66F));
             this.tlpDatabase.Controls.Add(this.chkUseSimulators,    0, 0);
             this.tlpDatabase.Controls.Add(this.chkUseLocalDatabase, 0, 1);
             this.tlpDatabase.Controls.Add(this.lblConnectionString,  0, 2);
@@ -322,6 +324,34 @@ namespace DuplexerFinalTest
 
             this.txtConnectionString.Dock = System.Windows.Forms.DockStyle.Fill;
             this.txtConnectionString.Name = "txtConnectionString";
+
+            // Simulator tuning labels and textboxes
+            this.lblSimPartSpread = new System.Windows.Forms.Label();
+            this.lblSimMeasNoise  = new System.Windows.Forms.Label();
+            this.txtSimPartSpread = new System.Windows.Forms.TextBox();
+            this.txtSimMeasNoise  = new System.Windows.Forms.TextBox();
+
+            this.lblSimPartSpread.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.lblSimPartSpread.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            this.lblSimPartSpread.Name = "lblSimPartSpread";
+            this.lblSimPartSpread.Text = "SIM Part Spread (%):";
+
+            this.txtSimPartSpread.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.txtSimPartSpread.Name = "txtSimPartSpread";
+
+            this.lblSimMeasNoise.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.lblSimMeasNoise.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            this.lblSimMeasNoise.Name = "lblSimMeasNoise";
+            this.lblSimMeasNoise.Text = "SIM Measurement Noise (%):";
+
+            this.txtSimMeasNoise.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.txtSimMeasNoise.Name = "txtSimMeasNoise";
+
+            // Add simulator controls to the database layout after they are instantiated
+            this.tlpDatabase.Controls.Add(this.lblSimPartSpread, 0, 4);
+            this.tlpDatabase.Controls.Add(this.txtSimPartSpread, 1, 4);
+            this.tlpDatabase.Controls.Add(this.lblSimMeasNoise,  0, 5);
+            this.tlpDatabase.Controls.Add(this.txtSimMeasNoise,  1, 5);
 
             // ── tlpButtons ────────────────────────────────────────────────
             // 3 cols (33 % | 34 % | 33 %), 1 row (100 %), Dock=Fill
@@ -411,6 +441,10 @@ namespace DuplexerFinalTest
         private System.Windows.Forms.Label                       lblConnectionString;
         private System.Windows.Forms.TextBox                     txtConnectionString;
         private System.Windows.Forms.CheckBox           chkSaveAuto;
+        private System.Windows.Forms.Label                lblSimPartSpread;
+        private System.Windows.Forms.TextBox              txtSimPartSpread;
+        private System.Windows.Forms.Label                lblSimMeasNoise;
+        private System.Windows.Forms.TextBox              txtSimMeasNoise;
         private System.Windows.Forms.TableLayoutPanel   tlpButtons;
         private System.Windows.Forms.Button             btnSave;
         private System.Windows.Forms.Button             btnCancel;

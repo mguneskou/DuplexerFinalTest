@@ -46,6 +46,18 @@ namespace DuplexerFinalTest.Equipment
             IsConnected = false;
         }
 
+        // Marks the TCP link as lost after a runtime send/query failure so
+        // Shared.ReconnectDisconnectedEquipment will actually reconnect on retry
+        // instead of trusting an out-of-date IsConnected flag.
+        private void MarkLinkLost()
+        {
+            try { _stream?.Close(); } catch { }
+            try { _client?.Close(); } catch { }
+            _stream = null;
+            _client = null;
+            IsConnected = false;
+        }
+
         // Query current mode — safe check that confirms the chamber is responding.
         public string GetID()
         {
@@ -64,7 +76,7 @@ namespace DuplexerFinalTest.Equipment
                 int bytesRead = _stream.Read(buffer, 0, buffer.Length);
                 return Encoding.ASCII.GetString(buffer, 0, bytesRead).Trim();
             }
-            catch { return string.Empty; }
+            catch { MarkLinkLost(); return string.Empty; }
         }
 
         private void SendCommand(string command)
@@ -75,7 +87,7 @@ namespace DuplexerFinalTest.Equipment
                 _stream.Write(data, 0, data.Length);
                 Thread.Sleep(100);
             }
-            catch { }
+            catch { MarkLinkLost(); }
         }
 
         // Response: "TEMP, measured,setpoint"  →  parts[0]="TEMP", parts[1]=measured, parts[2]=setpoint
@@ -230,6 +242,36 @@ namespace DuplexerFinalTest.Equipment
             SendCommand($"TEMP,H{highLimit.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}");
             SendCommand($"TEMP,L{lowLimit.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}");
             return true;
+        }
+
+        // Queries the chamber program monitor.
+        // P-300 response: "MON, RUN, 3/15, 0:45:23"
+        public ChamberProgramMonitorModel GetProgramMonitor()
+        {
+            var model = new ChamberProgramMonitorModel();
+            try
+            {
+                string response = SendQuery("PRGM MON?");
+                if (string.IsNullOrEmpty(response) || response.StartsWith("NA:"))
+                    return model;
+                var parts = response.Split(',');
+                if (parts.Length >= 3)
+                {
+                    model.Status = parts[1].Trim();
+                    var stepParts = parts[2].Trim().Split('/');
+                    if (stepParts.Length == 2)
+                    {
+                        int.TryParse(stepParts[0].Trim(), out int cur);
+                        int.TryParse(stepParts[1].Trim(), out int total);
+                        model.CurrentStep = cur;
+                        model.TotalSteps = total;
+                    }
+                    if (parts.Length >= 4)
+                        model.RemainingTime = parts[3].Trim();
+                }
+            }
+            catch { MarkLinkLost(); }
+            return model;
         }
     }
 }

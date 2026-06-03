@@ -11,6 +11,14 @@ namespace DuplexerFinalTest.Tests
 {
     public static class IndividualTestRun
     {
+        private static string SuccessStatusText()
+        {
+            return Shared.sharedGeneralSettings?.GeneralSettings?[0]
+                .USE_SIMULATORS?.Trim().ToLower() == "true"
+                ? "Passed"
+                : "Completed";
+        }
+
         private static SMUSettingsModel BuildSMUSettings(SMUChannelModel ch)
         {
             return new SMUSettingsModel()
@@ -65,7 +73,7 @@ namespace DuplexerFinalTest.Tests
             {
                 var smuMaster_CH1 = BuildSMUSettings(Shared.Base_Z_IB_IOP.SMU1.Channels[0]);
                 var smuMaster_CH2 = BuildSMUSettings(Shared.Base_Z_IB_IOP.SMU1.Channels[1]);
-                var smuSlave_CH1 = BuildSMUSettings(Shared.Base_Z_IB_IOP.SMU2.Channels[0]);
+                var smuSlave_CH2 = BuildSMUSettings(Shared.Base_Z_IB_IOP.SMU2.Channels[0]);
 
                 if (!Shared.OpticalSwitch1x4.CloseChannel(1))
                     throw new EquipmentCommunicationException("Optical switch 1x4 cannot close channel 1.");
@@ -81,21 +89,28 @@ namespace DuplexerFinalTest.Tests
                         throw new EquipmentCommunicationException($"Base optical switch 1x13 cannot close channel {DUT.Slot}.");
 
                     if (!Shared.ElectricalSwitchBase1.CloseChannels(
-                        new List<int>() { Shared.Base_Z_IB_IOP.ElectricalSwitch1.Positions[DUT.Slot - 1].FromChannel }))
+                        new List<int>() {
+                            Shared.Base_Z_IB_IOP.ElectricalSwitch1.Positions[DUT.Slot - 1].FromChannel,
+                            Shared.Base_Z_IB_IOP.ElectricalSwitch1.Positions[DUT.Slot - 1].ToChannel
+                        }))
                         throw new EquipmentCommunicationException("Base electrical switch #1 error.");
 
                     if (!Shared.ElectricalSwitchBase3.CloseChannels(
-                        new List<int>() { Shared.Base_Z_IB_IOP.ElectricalSwitch2.Positions[0].FromChannel }))
+                        new List<int>() {
+                            Shared.Base_Z_IB_IOP.ElectricalSwitch2.Positions[0].FromChannel,
+                            Shared.Base_Z_IB_IOP.ElectricalSwitch2.Positions[0].ToChannel
+                        }))
                         throw new EquipmentCommunicationException("Base electrical switch #3 error.");
 
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster_CH1);
                     Shared.SMU_master.SetReadingChannel(smuMaster_CH2);
-                    Shared.SMU_slave.SetReadingChannel(smuSlave_CH1);
+                    Shared.SMU_slave.Reset();
+                    Shared.SMU_slave.SetReadingChannel(smuSlave_CH2);
                     Shared.SMU_master.InitiateReading(
                         new List<int>() { smuMaster_CH1.Channel, smuMaster_CH2.Channel }, smuMaster_CH2);
                     Shared.SMU_slave.InitiateReading(
-                        new List<int>() { smuSlave_CH1.Channel }, smuSlave_CH1);
+                        new List<int>() { smuSlave_CH2.Channel }, smuSlave_CH2);
 
                     int readSize = smuMaster_CH1.SweepRange.Steps;
                     ReadIntoLists(Shared.SMU_master, smuMaster_CH1.Channel, readSize, true,
@@ -108,7 +123,7 @@ namespace DuplexerFinalTest.Tests
                         testResults.Base_Z_IB_IOP_Results.CH2_Current,
                         testResults.Base_Z_IB_IOP_Results.CH2_Time);
 
-                    ReadIntoLists(Shared.SMU_slave, smuSlave_CH1.Channel, readSize, true,
+                    ReadIntoLists(Shared.SMU_slave, smuSlave_CH2.Channel, readSize, true,
                         testResults.Base_Z_IB_IOP_Results.CH4_Voltage,
                         testResults.Base_Z_IB_IOP_Results.CH4_Current,
                         testResults.Base_Z_IB_IOP_Results.CH4_Time);
@@ -133,7 +148,7 @@ namespace DuplexerFinalTest.Tests
 
                 Shared.SMU_master.CloseAllChannels();
                 Shared.SMU_slave.CloseAllChannels();
-                bgw.ReportProgress(index, $"►Base_Z_IB_IOP @{temperature}°C | Passed");
+                bgw.ReportProgress(index, $"►Base_Z_IB_IOP @{temperature}°C | {SuccessStatusText()}");
                 return true;
             }
             catch (EquipmentCommunicationException)
@@ -186,17 +201,17 @@ namespace DuplexerFinalTest.Tests
                         }))
                         throw new EquipmentCommunicationException("Base electrical switch #3 error (Z_IPD).");
 
+                    // Configure bias channel first — output turns ON so bias is active during sweep
+                    Shared.SMU_slave.Reset();
+                    Shared.SMU_slave.SetSweepChannel(smuSlave);
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
+                    Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     Shared.SMU_master.InitiateReading(new List<int>() { smuMaster.Channel }, smuMaster);
                     ReadIntoLists(Shared.SMU_master, smuMaster.Channel, smuMaster.SweepRange.Steps, true,
                         testResults.Base_Z_IPD_Results.CH3_Voltage,
                         testResults.Base_Z_IPD_Results.CH3_Current,
                         testResults.Base_Z_IPD_Results.CH3_Time);
-
-                    Shared.SMU_slave.Reset();
-                    Shared.SMU_slave.SetSweepChannel(smuSlave);
-                    Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     ReadIntoLists(Shared.SMU_slave, smuSlave.Channel, smuSlave.SweepRange.Steps, true,
                         testResults.Base_Z_IPD_Results.CH2_Voltage,
                         testResults.Base_Z_IPD_Results.CH2_Current,
@@ -214,7 +229,7 @@ namespace DuplexerFinalTest.Tests
 
                 Shared.SMU_master.CloseAllChannels();
                 Shared.SMU_slave.CloseAllChannels();
-                bgw.ReportProgress(index, $"►Base_Z_IPD @{temperature}°C | Passed");
+                bgw.ReportProgress(index, $"►Base_Z_IPD @{temperature}°C | {SuccessStatusText()}");
                 return true;
             }
             catch (EquipmentCommunicationException)
@@ -268,17 +283,17 @@ namespace DuplexerFinalTest.Tests
                         }))
                         throw new EquipmentCommunicationException("Remote electrical switch #3 error (Z_IOP).");
 
+                    // Configure bias channel first — output turns ON so bias is active during sweep
+                    Shared.SMU_slave.Reset();
+                    Shared.SMU_slave.SetSweepChannel(smuSlave);
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
+                    Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     Shared.SMU_master.InitiateReading(new List<int>() { smuMaster.Channel }, smuMaster);
                     ReadIntoLists(Shared.SMU_master, smuMaster.Channel, smuMaster.SweepRange.Steps, true,
                         testResults.Remote_Z_IOP_Results.CH1_Voltage,
                         testResults.Remote_Z_IOP_Results.CH1_Current,
                         testResults.Remote_Z_IOP_Results.CH1_Time);
-
-                    Shared.SMU_slave.Reset();
-                    Shared.SMU_slave.SetSweepChannel(smuSlave);
-                    Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     ReadIntoLists(Shared.SMU_slave, smuSlave.Channel, smuSlave.SweepRange.Steps, true,
                         testResults.Remote_Z_IOP_Results.CH4_Voltage,
                         testResults.Remote_Z_IOP_Results.CH4_Current,
@@ -304,7 +319,7 @@ namespace DuplexerFinalTest.Tests
 
                 Shared.SMU_master.CloseAllChannels();
                 Shared.SMU_slave.CloseAllChannels();
-                bgw.ReportProgress(index, $"►Remote_Z_IOP @{temperature}°C | Passed");
+                bgw.ReportProgress(index, $"►Remote_Z_IOP @{temperature}°C | {SuccessStatusText()}");
                 return true;
             }
             catch (EquipmentCommunicationException)
@@ -358,17 +373,17 @@ namespace DuplexerFinalTest.Tests
                         }))
                         throw new EquipmentCommunicationException("Remote electrical switch #3 error (Z_IPV).");
 
+                    // Configure bias channel first — output turns ON so bias is active during sweep
+                    Shared.SMU_slave.Reset();
+                    Shared.SMU_slave.SetSweepChannel(smuSlave);
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
+                    Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     Shared.SMU_master.InitiateReading(new List<int>() { smuMaster.Channel }, smuMaster);
                     ReadIntoLists(Shared.SMU_master, smuMaster.Channel, smuMaster.SweepRange.Steps, true,
                         testResults.Remote_Z_IPV_Results.CH3_Voltage,
                         testResults.Remote_Z_IPV_Results.CH3_Current,
                         testResults.Remote_Z_IPV_Results.CH3_Time);
-
-                    Shared.SMU_slave.Reset();
-                    Shared.SMU_slave.SetSweepChannel(smuSlave);
-                    Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     ReadIntoLists(Shared.SMU_slave, smuSlave.Channel, smuSlave.SweepRange.Steps, true,
                         testResults.Remote_Z_IPV_Results.CH2_Voltage,
                         testResults.Remote_Z_IPV_Results.CH2_Current,
@@ -386,7 +401,7 @@ namespace DuplexerFinalTest.Tests
 
                 Shared.SMU_master.CloseAllChannels();
                 Shared.SMU_slave.CloseAllChannels();
-                bgw.ReportProgress(index, $"►Remote_Z_IPV @{temperature}°C | Passed");
+                bgw.ReportProgress(index, $"►Remote_Z_IPV @{temperature}°C | {SuccessStatusText()}");
                 return true;
             }
             catch (EquipmentCommunicationException)
@@ -440,17 +455,17 @@ namespace DuplexerFinalTest.Tests
                         }))
                         throw new EquipmentCommunicationException("Remote electrical switch #3 error (Z_VPV).");
 
+                    // Configure bias channel first — output turns ON so bias is active during sweep
+                    Shared.SMU_slave.Reset();
+                    Shared.SMU_slave.SetSweepChannel(smuSlave);
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
+                    Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     Shared.SMU_master.InitiateReading(new List<int>() { smuMaster.Channel }, smuMaster);
                     ReadIntoLists(Shared.SMU_master, smuMaster.Channel, smuMaster.SweepRange.Steps, true,
                         testResults.Remote_Z_VPV_Results.CH3_Voltage,
                         testResults.Remote_Z_VPV_Results.CH3_Current,
                         testResults.Remote_Z_VPV_Results.CH3_Time);
-
-                    Shared.SMU_slave.Reset();
-                    Shared.SMU_slave.SetSweepChannel(smuSlave);
-                    Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     ReadIntoLists(Shared.SMU_slave, smuSlave.Channel, smuSlave.SweepRange.Steps, true,
                         testResults.Remote_Z_VPV_Results.CH2_Voltage,
                         testResults.Remote_Z_VPV_Results.CH2_Current,
@@ -479,7 +494,7 @@ namespace DuplexerFinalTest.Tests
 
                 Shared.SMU_master.CloseAllChannels();
                 Shared.SMU_slave.CloseAllChannels();
-                bgw.ReportProgress(index, $"►Remote_Z_VPV @{temperature}°C | Passed");
+                bgw.ReportProgress(index, $"►Remote_Z_VPV @{temperature}°C | {SuccessStatusText()}");
                 return true;
             }
             catch (EquipmentCommunicationException)

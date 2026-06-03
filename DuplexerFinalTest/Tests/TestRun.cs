@@ -41,6 +41,9 @@ namespace DuplexerFinalTest.Tests
         {
             if (_testWorker.IsBusy) return;
 
+            if (Shared.currentRunMetrics == null)
+                Shared.currentRunMetrics = new RunMetricsModel();
+
             sequence = test.Clone();
 
             if (!double.TryParse(Shared.sharedGeneralSettings.GeneralSettings[0].PLOT_UPDATE_IN_MINUTES,
@@ -93,9 +96,15 @@ namespace DuplexerFinalTest.Tests
                 if (!Directory.Exists(folder)) return;
                 string archiveFolder = Path.Combine(folder, "Archive");
                 Directory.CreateDirectory(archiveFolder);
+                string archiveTimestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 var di = new DirectoryInfo(folder);
                 foreach (var file in di.GetFiles())
-                    File.Move(file.FullName, Path.Combine(archiveFolder, file.Name), true);
+                {
+                    string archivedName = Path.GetFileNameWithoutExtension(file.Name)
+                        + "_arch_" + archiveTimestamp
+                        + file.Extension;
+                    File.Move(file.FullName, Path.Combine(archiveFolder, archivedName));
+                }
             }
             catch { }
         }
@@ -109,11 +118,142 @@ namespace DuplexerFinalTest.Tests
             {
                 if (sequence.CallsChamberProgram)
                 {
-                    // Local chamber program
+                    // Start the stored chamber program
                     Shared.ClimaticChamber.RunLocalProgram(
                         sequence.ChamberProgram.ProgramNumber,
                         sequence.ChamberProgram.StartStepNumber);
-                    // TODO: implement wait-for-chamber-step feedback loop when protocol is known
+                    Shared.logger?.Log($"Chamber program {sequence.ChamberProgram.ProgramNumber} ({sequence.ChamberProgram.ExpectedProgramName}) started.");
+
+                    bool programEndedEarly = false;
+
+                    // For each configured test step: wait for the chamber to reach that step in RUN
+                    // state (GRANTY satisfied, soak timer counting), pause the timer, run tests,
+                    // then resume so the remaining soak time expires and the chamber advances.
+                    for (int s = 0; s < sequence.ChamberProgram.TestsForEachStep.Count; s++)
+                    {
+                        if (bgw.CancellationPending) { e.Cancel = true; return; }
+
+                        var stepConfig = sequence.ChamberProgram.TestsForEachStep[s];
+                        sweepNo++;
+
+                        bgw.ReportProgress(0, $"Waiting for chamber step {stepConfig.StepNumber}...");
+                        Shared.logger?.Log($"Waiting for chamber program step {stepConfig.StepNumber}.");
+
+                        // 3-hour ceiling per step (accounts for long RAMP + SOAK cycles)
+                        const long stepWaitTimeoutMs = 180L * 60 * 1000;
+                        long stepWaitStart = Shared.testTimer.ElapsedMilliseconds;
+                        bool stepReached = false;
+                        while (!stepReached)
+                        {
+                            if (bgw.CancellationPending) { e.Cancel = true; return; }
+                            Thread.Sleep(2000);
+
+                            var currentTemp = Shared.ClimaticChamber.GetTemperature();
+                            Shared.currentRunMetrics?.RecordChamberTemperature(currentTemp?.MeasuredTemperature ?? double.NaN, double.NaN);
+                            CheckChamberSafetyLimits(currentTemp?.MeasuredTemperature ?? double.NaN);
+                            FireTemperatureUpdateIfDue(currentTemp);
+
+                            var monitor = Shared.ClimaticChamber.GetProgramMonitor();
+                            if (monitor == null) continue;
+
+                            bgw.ReportProgress(0, $"Step {monitor.CurrentStep}/{monitor.TotalSteps} [{monitor.Status}] — waiting for step {stepConfig.StepNumber}");
+
+                            if (monitor.Status == "END")
+                            {
+                                Shared.logger?.Log($"Chamber program ended before reaching step {stepConfig.StepNumber}.", MessageType.Warning);
+                                programEndedEarly = true;
+                                break;
+                            }
+
+                            if (monitor.CurrentStep == stepConfig.StepNumber && monitor.Status == "RUN")
+                                stepReached = true;
+
+                            if (Shared.testTimer.ElapsedMilliseconds - stepWaitStart > stepWaitTimeoutMs)
+                                throw new EquipmentCommunicationException(
+                                    $"Timeout (3 hours) waiting for chamber step {stepConfig.StepNumber}. " +
+                                    $"Last status: step {monitor.CurrentStep} [{monitor.Status}]");
+                        }
+
+                        if (programEndedEarly) break;
+
+                        // Freeze the soak timer while we run tests
+                        Shared.ClimaticChamber.ProgramPause();
+                        double soakTemp = Shared.ClimaticChamber.GetTemperature()?.MeasuredTemperature ?? double.NaN;
+                        Shared.logger?.Log($"Chamber paused at step {stepConfig.StepNumber}, temp={soakTemp:F1}°C.");
+                        bgw.ReportProgress(s, $"Step {stepConfig.StepNumber}: SOAK @ {soakTemp:F1}°C");
+
+                        // Pre-delay
+                        long preDelayMs = (long)(stepConfig.DelayBeforeSweepsMinutes * 60000.0);
+                        if (preDelayMs > 0)
+                        {
+                            bgw.ReportProgress(s, $"Step {stepConfig.StepNumber}: delay before sweeps | {TimeSpan.FromMilliseconds(preDelayMs)}");
+                            Shared.logger?.Log($"Step {stepConfig.StepNumber}: pre-delay {stepConfig.DelayBeforeSweepsMinutes}min");
+                            long preStart = Shared.testTimer.ElapsedMilliseconds;
+                            do
+                            {
+                                if (bgw.CancellationPending) { Shared.ClimaticChamber.ProgramContinue(); e.Cancel = true; return; }
+                                Thread.Sleep(500);
+                                var t = Shared.ClimaticChamber.GetTemperature();
+                                Shared.currentRunMetrics?.RecordChamberTemperature(t?.MeasuredTemperature ?? double.NaN, soakTemp);
+                                CheckChamberSafetyLimits(t?.MeasuredTemperature ?? double.NaN);
+                                FireTemperatureUpdateIfDue(t);
+                            } while (Shared.testTimer.ElapsedMilliseconds < preStart + preDelayMs);
+                        }
+
+                        // Run tests for this step
+                        if (!string.IsNullOrWhiteSpace(stepConfig.Tests))
+                        {
+                            foreach (var testName in stepConfig.Tests.Split(','))
+                            {
+                                if (bgw.CancellationPending) { Shared.ClimaticChamber.ProgramContinue(); e.Cancel = true; return; }
+                                var testType = (TestSequences)Enum.Parse(typeof(TestSequences), testName.Trim(), true);
+                                bool stepPassed = true;
+                                RunTest(testType, bgw, s, sweepNo, soakTemp, ref stepPassed, ref e);
+                                if (e.Cancel) { Shared.ClimaticChamber.ProgramContinue(); return; }
+                                Thread.Sleep(1000);
+                            }
+                        }
+
+                        // Post-delay
+                        long postDelayMs = (long)(stepConfig.DelayAfterSweepsMinutes * 60000.0);
+                        if (postDelayMs > 0)
+                        {
+                            bgw.ReportProgress(s, $"Step {stepConfig.StepNumber}: delay after sweeps | {TimeSpan.FromMilliseconds(postDelayMs)}");
+                            Shared.logger?.Log($"Step {stepConfig.StepNumber}: post-delay {stepConfig.DelayAfterSweepsMinutes}min");
+                            long postStart = Shared.testTimer.ElapsedMilliseconds;
+                            do
+                            {
+                                if (bgw.CancellationPending) { Shared.ClimaticChamber.ProgramContinue(); e.Cancel = true; return; }
+                                Thread.Sleep(500);
+                                var t = Shared.ClimaticChamber.GetTemperature();
+                                Shared.currentRunMetrics?.RecordChamberTemperature(t?.MeasuredTemperature ?? double.NaN, soakTemp);
+                                CheckChamberSafetyLimits(t?.MeasuredTemperature ?? double.NaN);
+                                FireTemperatureUpdateIfDue(t);
+                            } while (Shared.testTimer.ElapsedMilliseconds < postStart + postDelayMs);
+                        }
+
+                        // Resume the soak timer — chamber advances to next step once
+                        // the remaining soak time expires.
+                        Shared.ClimaticChamber.ProgramContinue();
+                        Shared.logger?.Log($"Chamber resumed from step {stepConfig.StepNumber}.");
+                    }
+
+                    // Wait for the program to reach END (all steps complete)
+                    if (!programEndedEarly)
+                        bgw.ReportProgress(0, "Waiting for chamber program to complete...");
+                    while (!programEndedEarly)
+                    {
+                        if (bgw.CancellationPending) { e.Cancel = true; return; }
+                        Thread.Sleep(2000);
+                        var t2 = Shared.ClimaticChamber.GetTemperature();
+                        Shared.currentRunMetrics?.RecordChamberTemperature(t2?.MeasuredTemperature ?? double.NaN, double.NaN);
+                        CheckChamberSafetyLimits(t2?.MeasuredTemperature ?? double.NaN);
+                        FireTemperatureUpdateIfDue(t2);
+                        var endMonitor = Shared.ClimaticChamber.GetProgramMonitor();
+                        if (endMonitor?.Status == "END") break;
+                    }
+                    Shared.ClimaticChamber.ProgramEnd(ChamberProgramEndConditions.STANDBY);
+                    Shared.logger?.Log("Chamber program complete. Chamber set to STANDBY.");
                 }
                 else
                 {
@@ -165,6 +305,7 @@ namespace DuplexerFinalTest.Tests
                                 // TCP round-trips to the chamber.
                                 var currentTemp = Shared.ClimaticChamber.GetTemperature();
                                 measuredTemp = currentTemp?.MeasuredTemperature ?? double.NaN;
+                                Shared.currentRunMetrics?.RecordChamberTemperature(measuredTemp, step.GoTemperature);
 
                                 CheckChamberSafetyLimits(measuredTemp);
                                 FireTemperatureUpdateIfDue(currentTemp);
@@ -201,10 +342,12 @@ namespace DuplexerFinalTest.Tests
                                 if (bgw.CancellationPending) { e.Cancel = true; return; }
                                 Thread.Sleep(500);
                                 var currentTemp = Shared.ClimaticChamber.GetTemperature();
+                                Shared.currentRunMetrics?.RecordChamberTemperature(currentTemp?.MeasuredTemperature ?? double.NaN, step.GoTemperature);
                                 CheckChamberSafetyLimits(currentTemp?.MeasuredTemperature ?? double.NaN);
                                 FireTemperatureUpdateIfDue(currentTemp);
                             } while (Shared.testTimer.ElapsedMilliseconds < preDelay + preDelayMs);
                             Shared.logger?.Log($"Step {step.StepNo}: pre-delay done (actual {Shared.testTimer.ElapsedMilliseconds - preDelay}ms)");
+                            Shared.currentRunMetrics?.RecordSoakSettle(TimeSpan.FromMilliseconds(Shared.testTimer.ElapsedMilliseconds - preDelay));
 
                             // Run tests for this step
                             if (!string.IsNullOrWhiteSpace(step.Tests))
@@ -231,6 +374,7 @@ namespace DuplexerFinalTest.Tests
                                 if (bgw.CancellationPending) { e.Cancel = true; return; }
                                 Thread.Sleep(500);
                                 var currentTemp = Shared.ClimaticChamber.GetTemperature();
+                                Shared.currentRunMetrics?.RecordChamberTemperature(currentTemp?.MeasuredTemperature ?? double.NaN, step.GoTemperature);
                                 CheckChamberSafetyLimits(currentTemp?.MeasuredTemperature ?? double.NaN);
                                 FireTemperatureUpdateIfDue(currentTemp);
                             } while (Shared.testTimer.ElapsedMilliseconds < postDelay + postDelayMs);
@@ -286,6 +430,7 @@ namespace DuplexerFinalTest.Tests
                 catch (EquipmentCommunicationException ex) when (!bgw.CancellationPending)
                 {
                     retryCount++;
+                    Shared.currentRunMetrics?.RecordEquipmentRetry();
                     Shared.logger?.Log(
                         $"Equipment communication failure (attempt {retryCount}): {ex.Message}",
                         MessageType.Error);
@@ -307,6 +452,17 @@ namespace DuplexerFinalTest.Tests
                         e.Cancel = true;
                         return;
                     }
+
+                    if (retryCount > 2)
+                        Shared.currentRunMetrics?.RecordForcedOperatorResume();
+
+                    int reconnectCount = Shared.ReconnectDisconnectedEquipment();
+                    if (reconnectCount > 0)
+                    {
+                        Shared.currentRunMetrics?.RecordEquipmentReconnect(reconnectCount);
+                        Shared.logger?.Log($"Recovered {reconnectCount} disconnected equipment session(s) before retry.", MessageType.Warning);
+                    }
+
                     // ResumeNow → loop back and retry the same test step from the top
                     Shared.logger?.Log($"Operator resumed — retrying {testType}", MessageType.Warning);
                 }

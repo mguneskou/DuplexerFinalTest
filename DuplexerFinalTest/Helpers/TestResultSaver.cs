@@ -12,7 +12,6 @@ namespace DuplexerFinalTest.Helpers
         {
             try
             {
-                string tempStr = temperature.ToString("F1", System.Globalization.CultureInfo.InvariantCulture).Replace(".", "_");
                 string passFail = (testResults.OverallPassFail == OverallPassFail.PASS) ? "" : "_FAILED";
                 string dateStr = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 string fileName = $"{serialNumber}_{test}_{temperature:F1}C_sweep_{sweepNo}_{dateStr}{passFail}.csv";

@@ -30,7 +30,7 @@
       "LOCAL_DATABASE_CONNECTION_STRING": "Server=TQYLMGUNES1\\TQYLMGUNES1;Database=JDS_Production;Integrated Security=SSPI;TrustServerCertificate=True;",
       "SAVE_RESULTS_TO_DB_AUTO": "true",
       "ENABLE_DIAG_UI": "true"
-      ,"SIM_PART_SPREAD_PCT": "5.0"
+      ,"SIM_PART_SPREAD_PCT": "10.0"
       ,"SIM_MEAS_NOISE_PCT": "0.05"
     }
   ]

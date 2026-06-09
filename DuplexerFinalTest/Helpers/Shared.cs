@@ -77,6 +77,9 @@ namespace DuplexerFinalTest.Helpers
         // Timer
         public static System.Diagnostics.Stopwatch testTimer { get; set; }
 
+        // Current DUT serial for simulator offset assignment
+        public static string CurrentSimPartSerial { get; set; }
+
         public static void InitializeEquipment(GeneralSettingsModel settings)
         {
             if (settings?.GeneralSettings == null || settings.GeneralSettings.Count == 0) return;

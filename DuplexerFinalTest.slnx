@@ -1,3 +1,6 @@
 <Solution>
+  <Folder Name="/Tools/">
+    <Project Path="Tools/SimGrrRunner/SimGrrRunner.csproj" />
+  </Folder>
   <Project Path="DuplexerFinalTest/DuplexerFinalTest.csproj" />
 </Solution>

@@ -139,10 +139,10 @@ namespace DuplexerFinalTest
 
         private GrrWizardPage _grrPage = GrrWizardPage.Setup;
         private GaugeRrStudyDefinition _grrStudy;
-    private List<GaugeRrGroupResult> _grrResults = new List<GaugeRrGroupResult>();
-    private readonly List<DUTModel> _grrDuts = new List<DUTModel>();
-    private int _grrCurrentStepIndex = -1;
-    private string _grrReportHtmlPath;
+        private List<GaugeRrGroupResult> _grrResults = new List<GaugeRrGroupResult>();
+        private readonly List<DUTModel> _grrDuts = new List<DUTModel>();
+        private int _grrCurrentStepIndex = -1;
+        private string _grrReportHtmlPath;
         private string _grrReportCsvPath;
 
         private class GaugeRrStudyDefinition
@@ -2277,6 +2277,20 @@ namespace DuplexerFinalTest
             try
             {
                 _grrResults = AnalyzeGrrStudy(_grrStudy);
+                // Log detailed GRR analysis results for debugging discrimination (ndc) issues
+                try
+                {
+                    if (_grrResults != null && _grrResults.Count > 0)
+                    {
+                        foreach (var group in _grrResults)
+                        {
+                            var an = group.Anova;
+                            var rg = group.Range;
+                        
+                        }
+                    }
+                }
+                catch { }
                 WriteGrrReports();
                 LogOk($"Gauge R&R report saved → {_grrReportHtmlPath}");
                 LogOk($"Gauge R&R CSV saved → {_grrReportCsvPath}");
@@ -2334,6 +2348,9 @@ namespace DuplexerFinalTest
             var operatorIndex = study.Operators
                 .Select((name, index) => new { name, index })
                 .ToDictionary(x => x.name, x => x.index, StringComparer.OrdinalIgnoreCase);
+
+            // Debug: log expected parts/operators and actual observation counts
+                
 
             foreach (GaugeRrObservation observation in observations)
             {
@@ -2440,6 +2457,9 @@ namespace DuplexerFinalTest
             double msOperator = dfOperator > 0 ? ssOperator / dfOperator : 0;
             double msInteraction = dfInteraction > 0 ? ssInteraction / dfInteraction : 0;
             double msRepeat = dfRepeat > 0 ? ssRepeat / dfRepeat : 0;
+
+                // Debug logging for ANOVA internals
+                
 
             double evVariance = Math.Max(msRepeat, 0.0);
             double interactionVariance = dfInteraction > 0 ? Math.Max((msInteraction - msRepeat) / replicateCount, 0.0) : 0.0;

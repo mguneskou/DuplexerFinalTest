@@ -82,6 +82,7 @@ namespace DuplexerFinalTest.Tests
 
                 foreach (var DUT in sequence.BaseDUTs)
                 {
+                    Shared.CurrentSimPartSerial = DUT.SerialNumber;
                     testResults.Base_Z_IB_IOP_Results.Pass = false;
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
@@ -181,6 +182,7 @@ namespace DuplexerFinalTest.Tests
 
                 foreach (var DUT in sequence.BaseDUTs)
                 {
+                    Shared.CurrentSimPartSerial = DUT.SerialNumber;
                     testResults.Base_Z_IPD_Results.Pass = false;
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
@@ -204,8 +206,10 @@ namespace DuplexerFinalTest.Tests
                     // Configure bias channel first — output turns ON so bias is active during sweep
                     Shared.SMU_slave.Reset();
                     Shared.SMU_slave.SetSweepChannel(smuSlave);
+                    Shared.SMU_slave.SetReadingChannel(smuSlave);
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
+                    Shared.SMU_master.SetReadingChannel(smuMaster);
                     Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     Shared.SMU_master.InitiateReading(new List<int>() { smuMaster.Channel }, smuMaster);
                     ReadIntoLists(Shared.SMU_master, smuMaster.Channel, smuMaster.SweepRange.Steps, true,
@@ -262,6 +266,7 @@ namespace DuplexerFinalTest.Tests
 
                 foreach (var DUT in sequence.RemoteDUTs)
                 {
+                    Shared.CurrentSimPartSerial = DUT.SerialNumber;
                     testResults.Remote_Z_IOP_Results.Pass = false;
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
@@ -286,8 +291,10 @@ namespace DuplexerFinalTest.Tests
                     // Configure bias channel first — output turns ON so bias is active during sweep
                     Shared.SMU_slave.Reset();
                     Shared.SMU_slave.SetSweepChannel(smuSlave);
+                    Shared.SMU_slave.SetReadingChannel(smuSlave);
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
+                    Shared.SMU_master.SetReadingChannel(smuMaster);
                     Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     Shared.SMU_master.InitiateReading(new List<int>() { smuMaster.Channel }, smuMaster);
                     ReadIntoLists(Shared.SMU_master, smuMaster.Channel, smuMaster.SweepRange.Steps, true,
@@ -352,6 +359,7 @@ namespace DuplexerFinalTest.Tests
 
                 foreach (var DUT in sequence.RemoteDUTs)
                 {
+                    Shared.CurrentSimPartSerial = DUT.SerialNumber;
                     testResults.Remote_Z_IPV_Results.Pass = false;
                     if (bgw.CancellationPending) { cancelled = true; break; }
 
@@ -376,8 +384,10 @@ namespace DuplexerFinalTest.Tests
                     // Configure bias channel first — output turns ON so bias is active during sweep
                     Shared.SMU_slave.Reset();
                     Shared.SMU_slave.SetSweepChannel(smuSlave);
+                    Shared.SMU_slave.SetReadingChannel(smuSlave);
                     Shared.SMU_master.Reset();
                     Shared.SMU_master.SetSweepChannel(smuMaster);
+                    Shared.SMU_master.SetReadingChannel(smuMaster);
                     Shared.SMU_slave.InitiateReading(new List<int>() { smuSlave.Channel }, smuSlave);
                     Shared.SMU_master.InitiateReading(new List<int>() { smuMaster.Channel }, smuMaster);
                     ReadIntoLists(Shared.SMU_master, smuMaster.Channel, smuMaster.SweepRange.Steps, true,
@@ -434,6 +444,7 @@ namespace DuplexerFinalTest.Tests
 
                 foreach (var DUT in sequence.RemoteDUTs)
                 {
+                    Shared.CurrentSimPartSerial = DUT.SerialNumber;
                     testResults.Remote_Z_VPV_Results.Pass = false;
                     if (bgw.CancellationPending) { cancelled = true; break; }
 

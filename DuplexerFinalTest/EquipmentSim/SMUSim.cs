@@ -19,6 +19,8 @@ namespace DuplexerFinalTest.EquipmentSim
         private int _currentPartId = 0;
         private int _lastAssignedPartId = 0;
         private Dictionary<int, double> _partOffsets = new Dictionary<int, double>();
+        private Dictionary<string, double> _partOffsetsBySerial = new Dictionary<string, double>();
+        private string _lastAssignedPartSerial = null;
 
         public bool Connect(string resource)
         {
@@ -75,8 +77,39 @@ namespace DuplexerFinalTest.EquipmentSim
             _currentPartId++;
             double spread = _simPartSpreadPct / 100.0;
             double factor = 1.0 + (_rng.NextDouble() * 2.0 - 1.0) * spread; // uniform in [1-spread,1+spread]
-            _partOffsets[_currentPartId] = factor;
-            _lastAssignedPartId = _currentPartId;
+            // Prefer deterministic per-part offsets if a DUT serial is available in Shared
+            string serial = Shared.CurrentSimPartSerial;
+            if (!string.IsNullOrEmpty(serial))
+            {
+                if (!_partOffsetsBySerial.TryGetValue(serial, out double serialFactor))
+                {
+                    // Derive deterministic seed from serial (numeric if possible, otherwise simple hashing)
+                    long seed = 0;
+                    if (!long.TryParse(serial, out seed))
+                    {
+                        seed = 0;
+                        foreach (char c in serial)
+                            seed = seed * 31 + c;
+                    }
+                    var r = new Random((int)(seed & 0x7FFFFFFF));
+                    serialFactor = 1.0 + (r.NextDouble() * 2.0 - 1.0) * ( _simPartSpreadPct / 100.0 );
+                    _partOffsetsBySerial[serial] = serialFactor;
+                }
+                _lastAssignedPartSerial = serial;
+                _partOffsets[_currentPartId] = serialFactor;
+                _lastAssignedPartId = _currentPartId;
+                try { Shared.logger?.Log($"SMUSim: Assigned serial={serial}, partId={_currentPartId}, offsetFactor={serialFactor:F6}, spreadPct={_simPartSpreadPct}", MessageType.Message); } catch { }
+            }
+            else
+            {
+                _partOffsets[_currentPartId] = factor;
+                _lastAssignedPartId = _currentPartId;
+                try
+                {
+                    Shared.logger?.Log($"SMUSim: Assigned partId={_currentPartId}, offsetFactor={factor:F6}, spreadPct={_simPartSpreadPct}", MessageType.Message);
+                }
+                catch { }
+            }
             return true;
         }
 
@@ -137,6 +170,14 @@ namespace DuplexerFinalTest.EquipmentSim
                 data[i, 1] = curr;
                 data[i, 2] = i * 0.001; // Time
             }
+            try
+            {
+                if (!string.IsNullOrEmpty(_lastAssignedPartSerial))
+                    Shared.logger?.Log($"SMUSim Read: ch={ch}, partId={_lastAssignedPartId}, serial={_lastAssignedPartSerial}, offsetFactor={offsetFactor:F6}, measNoisePct={_simMeasNoisePct}", MessageType.Message);
+                else
+                    Shared.logger?.Log($"SMUSim Read: ch={ch}, partId={_lastAssignedPartId}, offsetFactor={offsetFactor:F6}, measNoisePct={_simMeasNoisePct}", MessageType.Message);
+            }
+            catch { }
             return true;
         }
 

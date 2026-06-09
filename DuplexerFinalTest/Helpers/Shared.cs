@@ -686,5 +686,58 @@ namespace DuplexerFinalTest.Helpers
             }
             return closestVal;
         }
+
+        public static void MirrorResultsToLegacy()
+        {
+            try
+            {
+                var s = sharedGeneralSettings?.GeneralSettings?.FirstOrDefault();
+                if (s == null) return;
+                var legacyRoot = s.LEGACY_RESULTS_ROOT?.Trim();
+                if (string.IsNullOrEmpty(legacyRoot)) return;
+
+                // Ensure root exists
+                Directory.CreateDirectory(legacyRoot);
+
+                var baseSrc = BaseResultsPath;
+                var remoteSrc = RemoteResultsPath;
+
+                var summaryLines = new List<string>();
+                summaryLines.Add("Serial,Type,RelativePath,FileName,FullPath,Timestamp");
+
+                void ProcessSource(string src, string type)
+                {
+                    if (string.IsNullOrWhiteSpace(src) || !Directory.Exists(src)) return;
+                    var files = Directory.GetFiles(src, "*.csv", SearchOption.TopDirectoryOnly);
+                    foreach (var f in files)
+                    {
+                        var filename = Path.GetFileName(f);
+                        if (string.IsNullOrWhiteSpace(filename)) continue;
+                        var parts = filename.Split('_');
+                        var serial = parts.Length > 0 ? parts[0] : "UNKNOWN";
+                        var destDir = Path.Combine(legacyRoot, type, serial);
+                        Directory.CreateDirectory(destDir);
+                        var destPath = Path.Combine(destDir, filename);
+                        try { File.Copy(f, destPath, true); }
+                        catch (Exception) { continue; }
+                        var rel = Path.Combine(type, serial, filename);
+                        summaryLines.Add($"{serial},{type},{rel},{filename},{destPath},{File.GetCreationTime(f).ToString("o")}");
+                    }
+                }
+
+                ProcessSource(baseSrc, "Base");
+                ProcessSource(remoteSrc, "Remote");
+
+                var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                var summaryFile = Path.Combine(legacyRoot, $"ZODIAC-TS_{timestamp}.csv");
+                File.WriteAllLines(summaryFile, summaryLines);
+
+                logger?.Log($"Mirrored results to legacy root: {legacyRoot}", MessageType.Success);
+            }
+            catch (Exception ex)
+            {
+                logger?.Log($"MirrorResultsToLegacy failed: {ex.Message}", MessageType.Warning);
+            }
+        }
     }
 }

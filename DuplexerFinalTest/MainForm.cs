@@ -944,6 +944,14 @@ namespace DuplexerFinalTest
                     ArchiveResultFiles(Path.Combine(Shared.RemoteResultsPath, "Archive"), results, passed, isSimulationMode);
                 }
             }
+            try
+            {
+                Shared.MirrorResultsToLegacy();
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.Log($"Mirror to legacy failed: {ex.Message}", MessageType.Warning);
+            }
             return allSaved;
         }
 

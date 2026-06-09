@@ -25,6 +25,7 @@
       "SMU_SLAVE_RESOURCE": "GPIB0::12::INSTR",
       "RESULTS_FOLDER": "P:\\MGunes\\DuplexerTestSuite\\Results",
       "RESOURCES_FOLDER": "P:\\MGunes\\DuplexerTestSuite\\Resources",
+      "LEGACY_RESULTS_ROOT": "P:\\MGunes\\Duplexer\\results",
       "USE_SIMULATORS": "true",
       "USE_LOCAL_DATABASE": "true",
       "LOCAL_DATABASE_CONNECTION_STRING": "Server=TQYLMGUNES1\\TQYLMGUNES1;Database=JDS_Production;Integrated Security=SSPI;TrustServerCertificate=True;",

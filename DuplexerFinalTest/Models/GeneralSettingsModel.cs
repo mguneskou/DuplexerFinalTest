@@ -37,6 +37,7 @@ namespace DuplexerFinalTest.Models
             dt.Rows.Add("SMU - Slave", s.SMU_SLAVE_RESOURCE);
             dt.Rows.Add("Results Folder", s.RESULTS_FOLDER);
             dt.Rows.Add("Resources Folder", s.RESOURCES_FOLDER);
+            dt.Rows.Add("Legacy Results Root", s.LEGACY_RESULTS_ROOT);
             dt.Rows.Add("Use Simulators", s.USE_SIMULATORS);
             dt.Rows.Add("Use Local Database", s.USE_LOCAL_DATABASE);
             dt.Rows.Add("Local DB Connection String", s.LOCAL_DATABASE_CONNECTION_STRING);
@@ -79,6 +80,7 @@ namespace DuplexerFinalTest.Models
         public string CHAMBER_HWPROT_MARGIN_C { get; set; }
         public string RESULTS_FOLDER { get; set; }
         public string RESOURCES_FOLDER { get; set; }
+        public string LEGACY_RESULTS_ROOT { get; set; }
         public string USE_SIMULATORS { get; set; }
         public string USE_LOCAL_DATABASE { get; set; }
         public string LOCAL_DATABASE_CONNECTION_STRING { get; set; }

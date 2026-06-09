@@ -83,6 +83,41 @@ namespace DuplexerFinalTest.Helpers
             catch { return new string[0]; }
         }
 
+        public Dictionary<string, string> GetOperatorBySerial(DateTime startDate, DateTime endDate)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                EnsureConnected();
+                string sql = @"SELECT SerialNo, Operator, COUNT(*) AS RunCount
+                               FROM MeasMain
+                               WHERE TRY_CONVERT(date, TestDate) BETWEEN @start AND @end
+                                 AND Operator IS NOT NULL
+                                 AND Operator <> ''
+                               GROUP BY SerialNo, Operator
+                               ORDER BY SerialNo, RunCount DESC";
+                using (var cmd = new SqlCommand(sql, _connection))
+                {
+                    cmd.Parameters.AddWithValue("@start", startDate);
+                    cmd.Parameters.AddWithValue("@end", endDate);
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            string serial = reader.IsDBNull(0) ? string.Empty : reader.GetString(0);
+                            string oper = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                            if (string.IsNullOrWhiteSpace(serial) || string.IsNullOrWhiteSpace(oper))
+                                continue;
+                            if (!result.ContainsKey(serial))
+                                result[serial] = oper;
+                        }
+                    }
+                }
+            }
+            catch { }
+            return result;
+        }
+
         /// <summary>
         /// Saves a test result following the reference device-code-shift pattern:
         ///   - 1st test:  saves as M{sn}A
@@ -114,13 +149,32 @@ namespace DuplexerFinalTest.Helpers
                         }
                         else if (existing.Length > 1)
                         {
-                            // e.g. ["MA", "MA1", "MA2"] → lastSuffix=2
-                            // Rename from highest down: MA2→MA3, MA1→MA2, MA→MA1
-                            int lastSuffix = int.Parse(existing[existing.Length - 1].Substring(baseCode.Length));
-                            for (int counter = lastSuffix; counter >= 0; counter--)
+                            // Parse all suffixes as integers to find the true numeric max (handles zero-padded formats)
+                            // e.g. existing=["MA", "MA01", "MA02", "MA10"] → suffixes=[0, 1, 2, 10] → max=10
+                            // Rename from highest down: MA10→MA11, MA02→MA03, MA01→MA02, MA→MA01
+                            int maxSuffix = 0;
+                            string maxSuffixFormat = "";
+                            foreach (var code in existing)
+                            {
+                                string suffix = code.Substring(baseCode.Length);
+                                if (suffix.Length == 0) continue;
+                                if (int.TryParse(suffix, out int numSuffix))
+                                {
+                                    if (numSuffix > maxSuffix)
+                                    {
+                                        maxSuffix = numSuffix;
+                                        maxSuffixFormat = suffix; // Preserve formatting (e.g. "01" vs "1")
+                                    }
+                                }
+                            }
+
+                            for (int counter = maxSuffix; counter >= 0; counter--)
                             {
                                 string from = counter == 0 ? baseCode : $"{baseCode}{counter}";
-                                string to = $"{baseCode}{counter + 1}";
+                                // Preserve zero-padding for the "to" suffix (use length of max format)
+                                string to = counter + 1 == maxSuffix + 1 
+                                    ? $"{baseCode}{(maxSuffix + 1).ToString(new string('0', maxSuffixFormat.Length))}"
+                                    : $"{baseCode}{counter + 1}";
                                 RenameDeviceCode(from, to, transaction);
                                 Shared.logger?.Log($"DB: renamed {from} → {to}");
                             }

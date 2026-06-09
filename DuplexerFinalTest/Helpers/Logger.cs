@@ -76,10 +76,10 @@ namespace DuplexerFinalTest.Helpers
                 item.SubItems.Add(message);
                 item.ForeColor = msgType switch
                 {
-                    MessageType.Error   => Color.Red,
-                    MessageType.Warning => Color.DarkOrange,
-                    MessageType.Success => Color.DarkGreen,
-                    _                   => Color.Black
+                    MessageType.Error   => Color.FromArgb(255, 120, 120),    // Lighter red for dark theme
+                    MessageType.Warning => Color.FromArgb(255, 200, 100),    // Lighter orange
+                    MessageType.Success => Color.Lime,                        // Bright green for visibility
+                    _                   => Color.FromArgb(224, 224, 224)     // Light gray (same as ThemeManager.TextLight)
                 };
                 _listView.Items.Add(item);
                 _listView.Items[_listView.Items.Count - 1].EnsureVisible();

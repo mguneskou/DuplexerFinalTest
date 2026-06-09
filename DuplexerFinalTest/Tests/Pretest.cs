@@ -19,6 +19,7 @@ namespace DuplexerFinalTest.Tests
         public void Run(List<DUTModel> DUTs)
         {
             _waitForm = new WaitForm(null, "Running Pretest...", true);
+            ThemeManager.ApplyDarkThemeToForm(_waitForm);
             _waitForm.DoWork += (bgw, e) => DoPretest(bgw, e, DUTs);
             _waitForm.WorkCompleted += (result) =>
             {

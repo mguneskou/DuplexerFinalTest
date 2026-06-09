@@ -1,4 +1,5 @@
 using System.Windows.Forms;
+using DuplexerFinalTest.Helpers;
 
 namespace DuplexerFinalTest
 {
@@ -9,7 +10,10 @@ namespace DuplexerFinalTest
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm());
+            
+            var mainForm = new MainForm();
+            ThemeManager.ApplyDarkThemeToForm(mainForm);
+            Application.Run(mainForm);
         }
     }
 }

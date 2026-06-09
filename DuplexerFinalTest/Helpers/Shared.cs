@@ -71,6 +71,7 @@ namespace DuplexerFinalTest.Helpers
         public static string GeneralSettingsPath { get; set; }
         public static string BaseResultsPath { get; set; }
         public static string RemoteResultsPath { get; set; }
+        public static string TopLevelResultFileName { get; set; }
         public static string loggingPath { get; set; }
         public static string SoftwareVersion { get; set; }
 
@@ -79,6 +80,30 @@ namespace DuplexerFinalTest.Helpers
 
         // Current DUT serial for simulator offset assignment
         public static string CurrentSimPartSerial { get; set; }
+
+        // Failed database save context (for retry mechanism)
+        public static FailedDatabaseSaveContext failedSaveContext { get; set; }
+
+        /// <summary>
+        /// Context for retrying failed database writes
+        /// </summary>
+        public class FailedDatabaseSaveContext
+        {
+            public bool HasFailures { get; set; }
+            public List<string> FailedSerials { get; set; } = new List<string>();
+            public InfoModel TestInfo { get; set; }
+            public bool FilesArchived { get; set; }
+            public DateTime? FailureTime { get; set; }
+
+            public void Reset()
+            {
+                HasFailures = false;
+                FailedSerials.Clear();
+                TestInfo = null;
+                FilesArchived = false;
+                FailureTime = null;
+            }
+        }
 
         public static void InitializeEquipment(GeneralSettingsModel settings)
         {
@@ -555,19 +580,45 @@ namespace DuplexerFinalTest.Helpers
 
         public static string FindFileByTemperature(System.Collections.Generic.List<System.IO.FileInfo> files, string keyword, double minTemp, double maxTemp, int sweepNo)
         {
+            if (files == null || files.Count == 0) return null;
+
+            // Accept both underscore and hyphen variants of the keyword (e.g. Z_IB_IOP or Z-IB-IOP)
+            string keywordHyphen = keyword.Replace('_', '-');
+
+            var candidates = new System.Collections.Generic.List<System.Tuple<System.IO.FileInfo, double, int>>();
             foreach (var fi in files)
             {
                 string file = fi.FullName;
                 string name = Path.GetFileName(file);
-                var match = Regex.Match(name, $@"{keyword}_(-?\d+(\.\d+)?)C");
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                // Require file name to contain either keyword variant
+                if (!name.Contains(keyword, StringComparison.OrdinalIgnoreCase) && !name.Contains(keywordHyphen, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var match = Regex.Match(name, @"_(-?\d+(?:\.\d+)?)C", RegexOptions.IgnoreCase);
                 if (!match.Success) continue;
                 if (!double.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Any,
                     System.Globalization.CultureInfo.InvariantCulture, out double temp)) continue;
                 if (temp < minTemp || temp > maxTemp) continue;
-                if (!name.Contains($"sweep_{sweepNo}_")) continue;
-                return file;
+
+                // Score candidates: prefer explicit sweep_{n}_ markers when present
+                int sweepScore = 0;
+                if (name.IndexOf($"sweep_{sweepNo}_", StringComparison.OrdinalIgnoreCase) >= 0) sweepScore = 2;
+                else if (name.IndexOf("sweep_", StringComparison.OrdinalIgnoreCase) >= 0) sweepScore = 1;
+
+                candidates.Add(System.Tuple.Create(fi, temp, sweepScore));
             }
-            return null;
+
+            if (candidates.Count == 0) return null;
+
+            // Prefer candidates with explicit sweep marker, then newest file by write time
+            var best = candidates
+                .OrderByDescending(c => c.Item3)
+                .ThenByDescending(c => c.Item1.LastWriteTimeUtc)
+                .First();
+
+            return best.Item1.FullName;
         }
 
 
@@ -737,6 +788,158 @@ namespace DuplexerFinalTest.Helpers
             catch (Exception ex)
             {
                 logger?.Log($"MirrorResultsToLegacy failed: {ex.Message}", MessageType.Warning);
+            }
+        }
+
+        public static void WriteZodiacIndexInResults()
+        {
+            try
+            {
+                var s = sharedGeneralSettings?.GeneralSettings?.FirstOrDefault();
+                if (s == null) return;
+                var resultsRoot = s.RESULTS_FOLDER?.Trim();
+                if (string.IsNullOrWhiteSpace(resultsRoot)) return;
+
+                var lines = new System.Collections.Generic.List<string>();
+                var fileName = Shared.TopLevelResultFileName;
+                var ts = string.Empty;
+                if (string.IsNullOrWhiteSpace(fileName))
+                {
+                    if (!string.IsNullOrWhiteSpace(infoModel?.TestDate) && !string.IsNullOrWhiteSpace(infoModel?.TestTime)
+                        && DateTime.TryParseExact($"{infoModel.TestDate} {infoModel.TestTime}", "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dtStart))
+                    {
+                        ts = dtStart.ToString("yyyy-MM-dd_HH-mm-ss");
+                    }
+                    else
+                    {
+                        ts = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                    }
+                    fileName = $"ZODIAC-TS_{ts}.csv";
+                    Shared.TopLevelResultFileName = fileName;
+                }
+                else
+                {
+                    ts = Path.GetFileNameWithoutExtension(fileName).Replace("ZODIAC-TS_", string.Empty);
+                }
+
+                lines.Add("Sequence information,Testset ID,Zodiac Temp Screen");
+                lines.Add("Sequence information,Device type,ZODIAC-TS");
+                lines.Add($"Sequence information,Date-time,{ts}");
+                lines.Add($"Sequence information,timestamp_ut,{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
+                lines.Add($"Sequence information,Software version,{SoftwareVersion ?? string.Empty}");
+                lines.Add("Sequence information,Sequence version,");
+                lines.Add("Sequence information,Sequence status,");
+                lines.Add($"Sequence information,resultFilename,{fileName}");
+                lines.Add($"Sequence information,Operator ID,{infoModel?.Operator ?? string.Empty}");
+                lines.Add("Sequence information,test stage,zodiacTempScreen");
+                lines.Add("Sequence information,testable_item,ZODIAC_TS");
+
+                // Enumerate Base and Remote results and produce SMU_sweeps groups grouped by temperature
+                void ProcessType(string type)
+                {
+                    string typeRoot = Path.Combine(resultsRoot, type);
+                    if (!Directory.Exists(typeRoot)) return;
+
+                    var files = Directory.GetFiles(typeRoot, "*.csv", SearchOption.AllDirectories)
+                        .Select(p => new FileInfo(p)).ToList();
+
+                    // Parse expected filename pattern: <serial>_<test>_<temp>C_<timestamp>.csv
+                    var parsed = files.Select(fi =>
+                    {
+                        var name = Path.GetFileName(fi.Name);
+                        var m = System.Text.RegularExpressions.Regex.Match(name, @"^(?<serial>[^_]+)_(?<test>[^_]+)_(?<temp>-?\d+)C_((?<ts>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})).*\\.csv$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (!m.Success)
+                        {
+                            // fallback: attempt to find temp number inside name
+                            var m2 = System.Text.RegularExpressions.Regex.Match(name, @"(?<temp>-?\d+)C", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                            var test = m2.Success ? (m2.Groups[0].Value) : "UNKNOWN";
+                            return new { File = fi, Serial = Path.GetFileNameWithoutExtension(name), Test = "UNKNOWN", Temp = "0" };
+                        }
+                        return new { File = fi, Serial = m.Groups["serial"].Value, Test = m.Groups["test"].Value, Temp = m.Groups["temp"].Value };
+                    }).ToList();
+
+                    var groups = parsed.GroupBy(p => p.Temp).OrderBy(g => int.TryParse(g.Key, out int tv) ? tv : 0).ToList();
+                    int groupIndex = 0;
+                    foreach (var g in groups)
+                    {
+                        string groupKey = groupIndex.ToString("D2");
+                        int idx = 1;
+                        foreach (var entry in g)
+                        {
+                            string testCode = entry.Test.Replace('_', '-');
+                            string filePath = entry.File.FullName;
+                            lines.Add($"SMU_sweeps__{groupKey},{testCode}@{g.Key}-{idx},{filePath}");
+                            idx++;
+                        }
+                        lines.Add($"SMU_sweeps__{groupKey},Test result,Pass");
+                        lines.Add($"SMU_sweeps__{groupKey},Test duration (s),0");
+                        groupIndex++;
+                    }
+                }
+
+                ProcessType("Base");
+                ProcessType("Remote");
+
+                var outFile = Path.Combine(resultsRoot, fileName);
+                File.WriteAllLines(outFile, lines);
+                logger?.Log($"Wrote ZODIAC index: {outFile}", MessageType.Success);
+            }
+            catch (Exception ex)
+            {
+                logger?.Log($"WriteZodiacIndexInResults failed: {ex.Message}", MessageType.Warning);
+            }
+        }
+
+        public static void ClearResultsFolderExceptArchive(string resultsFolder)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(resultsFolder) || !Directory.Exists(resultsFolder)) return;
+                var archiveFolder = Path.Combine(resultsFolder, "Archive");
+
+                // Delete all directories except Archive
+                foreach (var dir in Directory.GetDirectories(resultsFolder))
+                {
+                    try
+                    {
+                        if (string.Equals(Path.GetFileName(dir), "Archive", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        Directory.Delete(dir, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger?.Log($"Failed to delete results subfolder '{dir}': {ex.Message}", MessageType.Warning);
+                    }
+                }
+
+                // Delete any files directly under resultsFolder (not in Archive)
+                foreach (var file in Directory.GetFiles(resultsFolder))
+                {
+                    try { File.Delete(file); }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger?.Log($"ClearResultsFolderExceptArchive failed: {ex.Message}", MessageType.Warning);
+            }
+        }
+
+        public static void CleanResultsFoldersAfterArchiving()
+        {
+            try
+            {
+                var s = sharedGeneralSettings?.GeneralSettings?.FirstOrDefault();
+                if (s == null) return;
+                var resultsRoot = s.RESULTS_FOLDER?.Trim();
+                if (string.IsNullOrWhiteSpace(resultsRoot)) return;
+
+                ClearResultsFolderExceptArchive(Path.Combine(resultsRoot, "Base"));
+                ClearResultsFolderExceptArchive(Path.Combine(resultsRoot, "Remote"));
+            }
+            catch (Exception ex)
+            {
+                logger?.Log($"CleanResultsFoldersAfterArchiving failed: {ex.Message}", MessageType.Warning);
             }
         }
     }

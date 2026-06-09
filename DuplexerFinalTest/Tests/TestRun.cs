@@ -1,6 +1,7 @@
 using DuplexerFinalTest.Helpers;
 using DuplexerFinalTest.Models;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
@@ -29,6 +30,7 @@ namespace DuplexerFinalTest.Tests
         private TestResultModel _testResults;
         private double _plotUpdateInterval_sec = 0;
         private DateTime _lastPlotUpdate = DateTime.MinValue;
+        private int _testRunRetryCount = 0;  // Track test-run-level retries
 
         public TestRun()
         {
@@ -98,13 +100,53 @@ namespace DuplexerFinalTest.Tests
                 Directory.CreateDirectory(archiveFolder);
                 string archiveTimestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 var di = new DirectoryInfo(folder);
-                foreach (var file in di.GetFiles())
+                
+                // Gather CSV files from per-serial subdirectories, excluding Archive to prevent nesting
+                var filesToArchive = new List<System.IO.FileInfo>();
+                foreach (var subdir in di.GetDirectories().Where(d => !string.Equals(d.Name, "Archive", StringComparison.OrdinalIgnoreCase)))
+                {
+                    filesToArchive.AddRange(subdir.GetFiles("*.csv", SearchOption.TopDirectoryOnly));
+                }
+                
+                foreach (var file in filesToArchive)
                 {
                     string archivedName = Path.GetFileNameWithoutExtension(file.Name)
                         + "_arch_" + archiveTimestamp
                         + file.Extension;
-                    File.Move(file.FullName, Path.Combine(archiveFolder, archivedName));
+                    string relativePath = file.FullName;
+                    try { relativePath = Path.GetRelativePath(folder, file.FullName); } catch { relativePath = file.Name; }
+                    string relativeDir = Path.GetDirectoryName(relativePath) ?? string.Empty;
+                    string destDir = string.IsNullOrWhiteSpace(relativeDir) ? archiveFolder : Path.Combine(archiveFolder, relativeDir);
+                    Directory.CreateDirectory(destDir);
+                    string destPath = Path.Combine(destDir, archivedName);
+                    try
+                    {
+                        File.Copy(file.FullName, destPath, true);
+                    }
+                    catch { /* continue */ }
                 }
+
+                // After copying, delete original folders (except Archive)
+                try
+                {
+                    foreach (var subdir in Directory.GetDirectories(folder))
+                    {
+                        try
+                        {
+                            if (string.Equals(Path.GetFileName(subdir), "Archive", StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            Directory.Delete(subdir, true);
+                        }
+                        catch { }
+                    }
+
+                    // Delete any files at top-level of folder
+                    foreach (var f in Directory.GetFiles(folder))
+                    {
+                        try { File.Delete(f); } catch { }
+                    }
+                }
+                catch { }
             }
             catch { }
         }
@@ -112,16 +154,98 @@ namespace DuplexerFinalTest.Tests
         private void TestWorker_DoWork(object sender, DoWorkEventArgs e)
         {
             var bgw = (BackgroundWorker)sender;
+            _testRunRetryCount = 0;
+
+            while (true)
+            {
+                try
+                {
+                    ExecuteTestSequence(bgw, e);
+                    return; // Success - exit retry loop
+                }
+                catch (EquipmentCommunicationException ex) when (!bgw.CancellationPending)
+                {
+                    _testRunRetryCount++;
+                    Shared.logger?.Log(
+                        $"TEST RUN FAILURE (attempt {_testRunRetryCount}): {ex.Message}",
+                        MessageType.Error);
+
+                    // Retry schedule: 5 min, 15 min, 30 min, then ask operator
+                    TimeSpan delay = _testRunRetryCount == 1 ? TimeSpan.FromMinutes(5)
+                                   : _testRunRetryCount == 2 ? TimeSpan.FromMinutes(15)
+                                   : _testRunRetryCount == 3 ? TimeSpan.FromMinutes(30)
+                                   : TimeSpan.Zero;
+
+                    if (_testRunRetryCount <= 3)
+                    {
+                        bgw.ReportProgress(0,
+                            $"❌ Test run failed — auto-retry in {(int)delay.TotalMinutes} min: {ex.Message}");
+                        
+                        Shared.logger?.Log(
+                            $"Waiting {(int)delay.TotalMinutes} minutes before auto-retry {_testRunRetryCount}...",
+                            MessageType.Warning);
+
+                        // Show countdown and auto-retry
+                        if (!ShowCountdownAndWait(delay, bgw))
+                        {
+                            e.Cancel = true;
+                            return;
+                        }
+
+                        int reconnectCount = Shared.ReconnectDisconnectedEquipment();
+                        if (reconnectCount > 0)
+                        {
+                            Shared.currentRunMetrics?.RecordEquipmentReconnect(reconnectCount);
+                            Shared.logger?.Log($"Recovered {reconnectCount} equipment session(s) — retrying test run", MessageType.Warning);
+                        }
+
+                        bgw.ReportProgress(0, $"Retrying test run (attempt {_testRunRetryCount + 1})...");
+                        Shared.logger?.Log($"Auto-retry {_testRunRetryCount}: resuming test run", MessageType.Warning);
+                    }
+                    else
+                    {
+                        // After 3 failed auto-retries, ask operator
+                        bgw.ReportProgress(0, $"❌ Test run failed 3 times — waiting for operator...");
+                        
+                        var dialogResult = ShowTestRunFailureDialog(ex.Message, _testRunRetryCount);
+
+                        if (dialogResult == DialogResult.Cancel || bgw.CancellationPending)
+                        {
+                            e.Cancel = true;
+                            Shared.logger?.Log("Test run cancelled by operator after repeated failures", MessageType.Warning);
+                            return;
+                        }
+
+                        Shared.logger?.Log("Operator chose to resume — retrying test run", MessageType.Warning);
+                        bgw.ReportProgress(0, "Resuming test run by operator request...");
+
+                        int reconnectCount = Shared.ReconnectDisconnectedEquipment();
+                        if (reconnectCount > 0)
+                        {
+                            Shared.currentRunMetrics?.RecordEquipmentReconnect(reconnectCount);
+                            Shared.logger?.Log($"Recovered {reconnectCount} equipment session(s) — retrying test run", MessageType.Warning);
+                        }
+                    }
+                }
+                catch (Exception ex) when (!bgw.CancellationPending)
+                {
+                    Shared.logger?.LogError("TEST RUN FATAL ERROR (non-recoverable)", ex);
+                    e.Cancel = true;
+                    return;
+                }
+            }
+        }
+
+        private void ExecuteTestSequence(BackgroundWorker bgw, DoWorkEventArgs e)
+        {
             int sweepNo = 0;
 
-            try
+            if (sequence.CallsChamberProgram)
             {
-                if (sequence.CallsChamberProgram)
-                {
-                    // Start the stored chamber program
-                    Shared.ClimaticChamber.RunLocalProgram(
-                        sequence.ChamberProgram.ProgramNumber,
-                        sequence.ChamberProgram.StartStepNumber);
+                // Start the stored chamber program
+                Shared.ClimaticChamber.RunLocalProgram(
+                    sequence.ChamberProgram.ProgramNumber,
+                    sequence.ChamberProgram.StartStepNumber);
                     Shared.logger?.Log($"Chamber program {sequence.ChamberProgram.ProgramNumber} ({sequence.ChamberProgram.ExpectedProgramName}) started.");
 
                     bool programEndedEarly = false;
@@ -384,11 +508,6 @@ namespace DuplexerFinalTest.Tests
                         Thread.Sleep(50);
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Shared.logger?.LogError("TestRun.DoWork", ex);
-            }
         }
 
         private void RunTest(TestSequences testType, BackgroundWorker bgw, int stepIndex, int sweepNo,
@@ -484,9 +603,82 @@ namespace DuplexerFinalTest.Tests
             {
                 using (var form = new RetryCountdownForm(errorMessage, delay, attemptNumber))
                 {
+                    Helpers.ThemeManager.ApplyDarkThemeToForm(form);
                     form.ShowDialog(mainForm);
                     result = form.Result;
                 }
+            });
+
+            return result;
+        }
+
+        /// <summary>
+        /// Shows a countdown timer dialog with Resume/Cancel buttons. User can click "Resume Now" to skip wait.
+        /// </summary>
+        private bool ShowCountdownAndWait(TimeSpan delay, BackgroundWorker bgw)
+        {
+            var mainForm = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
+            if (mainForm == null || mainForm.IsDisposed)
+                return true; // Proceed if no UI available
+
+            var countdownResult = RetryCountdownResult.Cancel;
+            
+            mainForm.Invoke((MethodInvoker)delegate
+            {
+                using (var form = new RetryCountdownForm(
+                    "Test run failed. Fix the issue and click 'Resume Now' to skip the wait, or let the timer count down to auto-retry.",
+                    delay,
+                    0))  // attemptNumber=0 to indicate auto-retry (not numbered attempt)
+                {
+                    Helpers.ThemeManager.ApplyDarkThemeToForm(form);
+                    form.ShowDialog(mainForm);
+                    countdownResult = form.Result;
+                }
+            });
+
+            // Resume Now = user fixed and wants to continue immediately
+            if (countdownResult == RetryCountdownResult.ResumeNow)
+            {
+                Shared.logger?.Log("Operator clicked 'Resume Now' — skipping wait period", MessageType.Warning);
+                return true;  // Skip the wait, proceed with retry
+            }
+
+            // Cancel Test = user wants to stop
+            if (countdownResult == RetryCountdownResult.Cancel)
+            {
+                Shared.logger?.Log("Operator clicked 'Cancel Test' during countdown", MessageType.Warning);
+                return false;  // Abort test run
+            }
+
+            // Timeout = countdown completed, proceed with auto-retry
+            Shared.logger?.Log("Countdown completed — proceeding with auto-retry", MessageType.Warning);
+            return true;
+        }
+
+        /// <summary>
+        /// Shows a dialog with failure reason and Resume/Cancel buttons for operator decision.
+        /// </summary>
+        private DialogResult ShowTestRunFailureDialog(string errorMessage, int attemptNumber)
+        {
+            var result = DialogResult.Cancel;
+            var mainForm = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
+            if (mainForm == null || mainForm.IsDisposed)
+                return DialogResult.Cancel;
+
+            mainForm.Invoke((MethodInvoker)delegate
+            {
+                var message = $"Test run failed after {attemptNumber} attempt(s)\n\n" +
+                              $"Error:\n{errorMessage}\n\n" +
+                              $"Would you like to:\n" +
+                              $"• [Resume] Try the test again (may take ~12 hours)\n" +
+                              $"• [Cancel] Stop the test now";
+
+                result = MessageBox.Show(message, "Test Run Failed - Operator Action Required",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button1);
+
+                // Convert YesNo result to Resume/Cancel semantics
+                // Yes = Resume, No = Cancel
             });
 
             return result;

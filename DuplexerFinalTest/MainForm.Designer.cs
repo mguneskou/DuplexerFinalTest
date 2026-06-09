@@ -62,9 +62,11 @@ namespace DuplexerFinalTest
             this.mnuFile = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuNewTest = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuSaveToDatabase = new System.Windows.Forms.ToolStripMenuItem();
+            this.mnuRetryDatabase = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuCalibration = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuSettings = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuViewLogFiles = new System.Windows.Forms.ToolStripMenuItem();
+            this.mnuGenerateReport = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuTestProcedure = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuHelp = new System.Windows.Forms.ToolStripMenuItem();
             this.mnuDiagnostics = new System.Windows.Forms.ToolStripMenuItem();
@@ -90,8 +92,8 @@ namespace DuplexerFinalTest
 
             // mnuFile
             this.mnuFile.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
-                this.mnuNewTest, this.mnuSaveToDatabase, this.mnuCalibration, this.mnuSettings, this.mnuViewLogFiles,
-                this.mnuTestProcedure, this.mnuHelp, this.mnuDiagnostics, new System.Windows.Forms.ToolStripSeparator(), this.mnuExit });
+                this.mnuNewTest, this.mnuSaveToDatabase, this.mnuRetryDatabase, this.mnuCalibration, this.mnuSettings, this.mnuViewLogFiles,
+                this.mnuGenerateReport, this.mnuTestProcedure, this.mnuHelp, this.mnuDiagnostics, new System.Windows.Forms.ToolStripSeparator(), this.mnuExit });
             this.mnuFile.Name = "mnuFile";
             this.mnuFile.Size = new System.Drawing.Size(46, 24);
             this.mnuFile.Text = "File";
@@ -110,6 +112,14 @@ namespace DuplexerFinalTest
             this.mnuSaveToDatabase.Visible = false;
             this.mnuSaveToDatabase.Click += new System.EventHandler(this.MnuSaveToDatabase_Click);
 
+            // mnuRetryDatabase
+            this.mnuRetryDatabase.Name = "mnuRetryDatabase";
+            this.mnuRetryDatabase.Size = new System.Drawing.Size(200, 24);
+            this.mnuRetryDatabase.Text = "Retry Failed Database Write";
+            this.mnuRetryDatabase.Enabled = false;
+            this.mnuRetryDatabase.Visible = false;
+            this.mnuRetryDatabase.Click += new System.EventHandler(this.MnuRetryDatabase_Click);
+
             // mnuCalibration
             this.mnuCalibration.Name = "mnuCalibration";
             this.mnuCalibration.Size = new System.Drawing.Size(200, 24);
@@ -127,6 +137,12 @@ namespace DuplexerFinalTest
             this.mnuViewLogFiles.Size = new System.Drawing.Size(200, 24);
             this.mnuViewLogFiles.Text = "View Log Files";
             this.mnuViewLogFiles.Click += new System.EventHandler(this.MnuViewLogFiles_Click);
+
+            // mnuGenerateReport
+            this.mnuGenerateReport.Name = "mnuGenerateReport";
+            this.mnuGenerateReport.Size = new System.Drawing.Size(200, 24);
+            this.mnuGenerateReport.Text = "Generate Logbook Report";
+            this.mnuGenerateReport.Click += new System.EventHandler(this.MnuGenerateReport_Click);
 
             // mnuTestProcedure
             this.mnuTestProcedure.Name = "mnuTestProcedure";
@@ -517,9 +533,11 @@ namespace DuplexerFinalTest
         private System.Windows.Forms.ToolStripMenuItem mnuFile;
         private System.Windows.Forms.ToolStripMenuItem mnuNewTest;
         private System.Windows.Forms.ToolStripMenuItem mnuSaveToDatabase;
+        private System.Windows.Forms.ToolStripMenuItem mnuRetryDatabase;
         private System.Windows.Forms.ToolStripMenuItem mnuCalibration;
         private System.Windows.Forms.ToolStripMenuItem mnuSettings;
         private System.Windows.Forms.ToolStripMenuItem mnuViewLogFiles;
+        private System.Windows.Forms.ToolStripMenuItem mnuGenerateReport;
         private System.Windows.Forms.ToolStripMenuItem mnuTestProcedure;
         private System.Windows.Forms.ToolStripMenuItem mnuHelp;
         private System.Windows.Forms.ToolStripMenuItem mnuDiagnostics;

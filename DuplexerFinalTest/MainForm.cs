@@ -18,6 +18,7 @@ namespace DuplexerFinalTest
     public partial class MainForm : Form
     {
         private WaitForm waitForm = null;
+        private System.ComponentModel.BackgroundWorker bgwPostTestSave = null;
 
         public MainForm()
         {
@@ -56,6 +57,16 @@ namespace DuplexerFinalTest
             catch (Exception ex)
             {
                 MessageBox.Show(ex.Message);
+            }
+
+            // Apply dark theme to chart
+            try
+            {
+                ThemeManager.ApplyDarkThemeToChart(chartTemperature);
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.LogError("Chart theme application failed", ex);
             }
 
             // Read general settings
@@ -171,6 +182,7 @@ namespace DuplexerFinalTest
             // Connect equipment
             this.Enabled = false;
             waitForm = new WaitForm(null, "Connecting equipment...", false);
+            ThemeManager.ApplyDarkThemeToForm(waitForm);
             waitForm.Show();
             Application.DoEvents();
             try
@@ -205,6 +217,11 @@ namespace DuplexerFinalTest
             {
                 this.Text = "Duplexer Final Test";
             }
+
+            // Initialize background worker for post-test save operations
+            bgwPostTestSave = new System.ComponentModel.BackgroundWorker();
+            bgwPostTestSave.DoWork += BgwPostTestSave_DoWork;
+            bgwPostTestSave.RunWorkerCompleted += BgwPostTestSave_RunWorkerCompleted;
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -299,6 +316,7 @@ namespace DuplexerFinalTest
                 {
                     using (var sf = new StartForm())
                     {
+                        ThemeManager.ApplyDarkThemeToForm(sf);
                         if (sf.ShowDialog() == System.Windows.Forms.DialogResult.OK)
                         {
                             mnuNewTest.Text = "Cancel Test";
@@ -372,6 +390,7 @@ namespace DuplexerFinalTest
             {
                 using (var calibrationForm = new CalibrationForm())
                 {
+                    ThemeManager.ApplyDarkThemeToForm(calibrationForm);
                     calibrationForm.ShowDialog();
                 }
             }
@@ -385,6 +404,7 @@ namespace DuplexerFinalTest
         {
             try
             {
+                ThemeManager.ApplyDarkThemeToForm(Shared.settingsForm);
                 Shared.settingsForm.ShowDialog();
             }
             catch (Exception ex)
@@ -407,6 +427,26 @@ namespace DuplexerFinalTest
             catch (Exception ex)
             {
                 Shared.logger?.Log($"View log files: {ex.Message}", MessageType.Error);
+            }
+        }
+
+        private void MnuGenerateReport_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                using (var dialog = new LogbookReportDialog())
+                {
+                    ThemeManager.ApplyDarkThemeToForm(dialog);
+                    if (dialog.ShowDialog() == DialogResult.OK)
+                    {
+                        Shared.logger?.Log($"Report generated for date range {dialog.StartDate:yyyy-MM-dd} to {dialog.EndDate:yyyy-MM-dd}", MessageType.Success);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.LogError("Generate report failed", ex);
+                MessageBox.Show($"Failed to generate report: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -467,6 +507,7 @@ namespace DuplexerFinalTest
         private void MnuDiagnostics_Click(object sender, EventArgs e)
         {
             var frm = new DiagnosticForm();
+            ThemeManager.ApplyDarkThemeToForm(frm);
             frm.Show(this);
         }
 
@@ -556,63 +597,246 @@ namespace DuplexerFinalTest
 
                 DateTime runCompletedAt = DateTime.Now;
                 bool overallPassed = EvaluateRunOverallPassFail(updateLiveResultFileNames: true);
-                WriteExcelTestReport(overallPassed, runCompletedAt);
 
                 bool autoSave = Shared.sharedGeneralSettings?.GeneralSettings[0]
                     .SAVE_RESULTS_TO_DB_AUTO?.Trim().ToLower() == "true";
 
-                if (autoSave)
+                // Start background worker to save Excel and database without freezing UI
+                var saveContext = new PostTestSaveContext
                 {
-                    bool saved = SaveResultsToDatabase(out overallPassed);
-                    if (saved)
-                        Shared.logger?.Log("Results saved to database automatically", MessageType.Success);
-                    else
-                        Shared.logger?.Log("DB auto-save: one or more DUTs failed to save — see error(s) above", MessageType.Warning);
-                }
-                else
-                {
-                    Shared.logger?.Log("Auto-save is OFF — use 'Save to Database' menu item to save results", MessageType.Warning);
-                }
+                    OverallPassed = overallPassed,
+                    RunCompletedAt = runCompletedAt,
+                    AutoSaveEnabled = autoSave
+                };
+                bgwPostTestSave.RunWorkerAsync(saveContext);
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.LogError("TestRun_TestCompleted event handler", ex);
+            }
+        }
 
-                if (InvokeRequired)
-                    BeginInvoke((System.Windows.Forms.MethodInvoker)delegate
+        private class PostTestSaveContext
+        {
+            public bool OverallPassed { get; set; }
+            public DateTime RunCompletedAt { get; set; }
+            public bool AutoSaveEnabled { get; set; }
+        }
+
+        private void BgwPostTestSave_DoWork(object sender, System.ComponentModel.DoWorkEventArgs e)
+        {
+            if (e.Argument is RetryDatabaseSaveContext)
+            {
+                // Retry scenario - just re-save to database
+                try
+                {
+                    bool saved = SaveResultsToDatabase(out bool _);
+                    e.Result = new PostTestSaveResult
                     {
-                        prgTestProgress.Value = 100;
-                        ShowTestResult(overallPassed);
-                        btnCancelTest.Enabled = false;
-                        mnuNewTest.Text = "New Test";
-                        if (!autoSave)
-                        {
-                            mnuSaveToDatabase.Visible = true;
-                            mnuSaveToDatabase.Enabled = true;
-                        }
-                        Shared.testRun.TestUpdate -= TestRun_TestUpdate;
-                        Shared.testRun.TestCompleted -= TestRun_TestCompleted;
-                        Shared.testRun.TestTemperatureUpdate -= ClimaticChamber_Update;
-                        if (Shared.ClimaticChamber is ClimaticChamberSim sim)
-                            sim.Update -= ClimaticChamber_Update;
-                    });
+                        ExcelSucceeded = true,
+                        DatabaseSaveSucceeded = saved,
+                        IsRetry = true
+                    };
+                }
+                catch (Exception ex)
+                {
+                    Shared.logger?.LogError("Retry database save background worker", ex);
+                    e.Result = new PostTestSaveResult
+                    {
+                        ExcelSucceeded = false,
+                        DatabaseSaveSucceeded = false,
+                        ErrorMessage = ex.Message,
+                        IsRetry = true
+                    };
+                }
+                return;
+            }
+
+            var context = e.Argument as PostTestSaveContext;
+            if (context == null)
+                return;
+
+            try
+            {
+                // Write Excel report
+                WriteExcelTestReport(context.OverallPassed, context.RunCompletedAt);
+
+                // Save to database if auto-save is enabled
+                if (context.AutoSaveEnabled)
+                {
+                    bool saved = SaveResultsToDatabase(out bool overallPassed);
+                    e.Result = new PostTestSaveResult
+                    {
+                        ExcelSucceeded = true,
+                        DatabaseSaveSucceeded = saved,
+                        OverallPassed = overallPassed
+                    };
+                }
                 else
                 {
-                    prgTestProgress.Value = 100;
-                    ShowTestResult(overallPassed);
-                    btnCancelTest.Enabled = false;
-                    mnuNewTest.Text = "New Test";
-                    if (!autoSave)
+                    e.Result = new PostTestSaveResult
                     {
-                        mnuSaveToDatabase.Visible = true;
-                        mnuSaveToDatabase.Enabled = true;
-                    }
-                    Shared.testRun.TestUpdate -= TestRun_TestUpdate;
-                    Shared.testRun.TestCompleted -= TestRun_TestCompleted;
-                    Shared.testRun.TestTemperatureUpdate -= ClimaticChamber_Update;
-                    if (Shared.ClimaticChamber is ClimaticChamberSim sim)
-                        sim.Update -= ClimaticChamber_Update;
+                        ExcelSucceeded = true,
+                        DatabaseSaveSucceeded = false,
+                        OverallPassed = context.OverallPassed,
+                        SkippedAutoSave = true
+                    };
                 }
             }
             catch (Exception ex)
             {
-                Shared.logger?.Log($"Test completed handler: {ex.Message}", MessageType.Error);
+                Shared.logger?.LogError("Post-test save background worker", ex);
+                e.Result = new PostTestSaveResult
+                {
+                    ExcelSucceeded = false,
+                    DatabaseSaveSucceeded = false,
+                    ErrorMessage = ex.Message
+                };
+            }
+        }
+
+        private class PostTestSaveResult
+        {
+            public bool ExcelSucceeded { get; set; }
+            public bool DatabaseSaveSucceeded { get; set; }
+            public bool SkippedAutoSave { get; set; }
+            public bool OverallPassed { get; set; }
+            public bool IsRetry { get; set; }
+            public string ErrorMessage { get; set; }
+        }
+
+        private void BgwPostTestSave_RunWorkerCompleted(object sender, System.ComponentModel.RunWorkerCompletedEventArgs e)
+        {
+            try
+            {
+                var result = e.Result as PostTestSaveResult;
+                if (result == null)
+                    return;
+
+                // Handle retry scenario
+                if (result.IsRetry)
+                {
+                    if (result.DatabaseSaveSucceeded)
+                    {
+                        Shared.logger?.Log("Database retry successful - results saved", MessageType.Success);
+                        MessageBox.Show("Database retry successful! Results have been saved and archived.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        mnuRetryDatabase.Visible = false;
+                        Shared.failedSaveContext.Reset();
+                    }
+                    else
+                    {
+                        Shared.logger?.Log("Database retry still failing - check database connection", MessageType.Error);
+                        
+                        var dlgResult = MessageBox.Show(
+                            $"Database save still failed for: {string.Join(", ", Shared.failedSaveContext.FailedSerials)}\n\n" +
+                            "Do you want to archive the result files anyway?",
+                            "Database Save Failed Again",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Warning);
+
+                        if (dlgResult == DialogResult.Yes)
+                        {
+                            ArchiveUnarchivedResults();
+                            Shared.failedSaveContext.FilesArchived = true;
+                            Shared.logger?.Log("Result files archived (but NOT saved to database)", MessageType.Warning);
+                        }
+                    }
+                    mnuRetryDatabase.Enabled = true;
+                    return;
+                }
+
+                // Handle normal post-test save scenario
+                if (!result.ExcelSucceeded)
+                {
+                    Shared.logger?.Log($"Excel report save failed: {result.ErrorMessage}", MessageType.Error);
+                    return;
+                }
+
+                if (result.SkippedAutoSave)
+                {
+                    Shared.logger?.Log("Auto-save is OFF — use 'Save to Database' menu item to save results", MessageType.Warning);
+                    return;
+                }
+
+                if (result.DatabaseSaveSucceeded)
+                {
+                    Shared.logger?.Log("Results saved to database and archived successfully", MessageType.Success);
+                    
+                    // Show retry option if there are failed saves
+                    if (Shared.failedSaveContext?.HasFailures == true && !Shared.failedSaveContext.FilesArchived)
+                    {
+                        mnuRetryDatabase.Visible = true;
+                        mnuRetryDatabase.Enabled = true;
+                    }
+                }
+                else
+                {
+                    // DB save failed - ask operator about archiving
+                    if (Shared.failedSaveContext?.HasFailures == true)
+                    {
+                        Shared.logger?.Log("DB auto-save: one or more DUTs failed to save — see error(s) above", MessageType.Warning);
+                        
+                        var dlgResult = MessageBox.Show(
+                            $"Database save failed for: {string.Join(", ", Shared.failedSaveContext.FailedSerials)}\n\n" +
+                            "Do you want to archive the result files anyway?",
+                            "Database Save Failed",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Warning);
+
+                        if (dlgResult == DialogResult.Yes)
+                        {
+                            ArchiveUnarchivedResults();
+                            Shared.failedSaveContext.FilesArchived = true;
+                            Shared.logger?.Log("Result files archived (but NOT saved to database)", MessageType.Warning);
+                        }
+                        else
+                        {
+                            Shared.logger?.Log("Result files NOT archived - operator chose to keep them for retry", MessageType.Warning);
+                        }
+
+                        // Show retry option
+                        mnuRetryDatabase.Visible = true;
+                        mnuRetryDatabase.Enabled = true;
+                    }
+                }
+
+                // Cleanup event handlers (only for post-test scenario, not retries)
+                bool autoSave = Shared.sharedGeneralSettings?.GeneralSettings[0]
+                    .SAVE_RESULTS_TO_DB_AUTO?.Trim().ToLower() == "true";
+                
+                if (!autoSave)
+                {
+                    mnuSaveToDatabase.Visible = true;
+                    mnuSaveToDatabase.Enabled = true;
+                }
+
+                if (InvokeRequired)
+                {
+                    BeginInvoke((System.Windows.Forms.MethodInvoker)delegate
+                    {
+                        prgTestProgress.Value = 100;
+                        ShowTestResult(result.OverallPassed);
+                        btnCancelTest.Enabled = false;
+                        mnuNewTest.Text = "New Test";
+                    });
+                }
+                else
+                {
+                    prgTestProgress.Value = 100;
+                    ShowTestResult(result.OverallPassed);
+                    btnCancelTest.Enabled = false;
+                    mnuNewTest.Text = "New Test";
+                }
+
+                Shared.testRun.TestUpdate -= TestRun_TestUpdate;
+                Shared.testRun.TestCompleted -= TestRun_TestCompleted;
+                Shared.testRun.TestTemperatureUpdate -= ClimaticChamber_Update;
+                if (Shared.ClimaticChamber is ClimaticChamberSim sim)
+                    sim.Update -= ClimaticChamber_Update;
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.LogError("Post-test save completion handler", ex);
             }
         }
 
@@ -780,7 +1004,7 @@ namespace DuplexerFinalTest
                 return;
 
             var di = new DirectoryInfo(resultsFolder ?? string.Empty);
-            var allResults = di.Exists ? di.GetFiles().ToList() : new List<FileInfo>();
+            var allResults = di.Exists ? di.GetFiles("*.csv", System.IO.SearchOption.AllDirectories).ToList() : new List<FileInfo>();
 
             foreach (var dut in duts)
             {
@@ -858,12 +1082,23 @@ namespace DuplexerFinalTest
             bool allSaved = true;
             bool isSimulationMode = IsSimulationMode();
             overallPassed = true;
+            var failedSerials = new List<string>();
+            
+            // Generate one archive session timestamp for this entire test run
+            string archiveSessionTimestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss-fff");
 
             // ── Base DUTs ──────────────────────────────────────────────────────
             if (Shared.infoModel.Test.BaseDUTs?.Count > 0)
             {
                 var diBase = new DirectoryInfo(Shared.BaseResultsPath);
-                var allBaseResults = diBase.Exists ? diBase.GetFiles().ToList() : new System.Collections.Generic.List<FileInfo>();
+                var allBaseResults = new List<FileInfo>();
+                if (diBase.Exists)
+                {
+                    foreach (var subdir in diBase.GetDirectories().Where(d => !string.Equals(d.Name, "Archive", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        allBaseResults.AddRange(subdir.GetFiles("*.csv", SearchOption.TopDirectoryOnly));
+                    }
+                }
                 foreach (var dut in Shared.infoModel.Test.BaseDUTs)
                 {
                     string serialNo = dut.SerialNumber;
@@ -896,9 +1131,17 @@ namespace DuplexerFinalTest
                     };
 
                     if (!Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels))
+                    {
+                        Shared.logger?.Log($"Base DUT {serialNo}: DB save failed", MessageType.Error);
+                        failedSerials.Add(serialNo);
                         allSaved = false;
-
-                    ArchiveResultFiles(Path.Combine(Shared.BaseResultsPath, "Archive"), results, passed, isSimulationMode);
+                    }
+                    else
+                    {
+                        Shared.logger?.Log($"Base DUT {serialNo}: DB save succeeded", MessageType.Success);
+                        // Only archive on successful save
+                        ArchiveResultFiles(Path.Combine(Shared.BaseResultsPath, "Archive"), results, passed, isSimulationMode, archiveSessionTimestamp);
+                    }
                 }
             }
 
@@ -906,7 +1149,14 @@ namespace DuplexerFinalTest
             if (Shared.infoModel.Test.RemoteDUTs?.Count > 0)
             {
                 var diRemote = new DirectoryInfo(Shared.RemoteResultsPath);
-                var allRemoteResults = diRemote.Exists ? diRemote.GetFiles().ToList() : new System.Collections.Generic.List<FileInfo>();
+                var allRemoteResults = new List<FileInfo>();
+                if (diRemote.Exists)
+                {
+                    foreach (var subdir in diRemote.GetDirectories().Where(d => !string.Equals(d.Name, "Archive", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        allRemoteResults.AddRange(subdir.GetFiles("*.csv", SearchOption.TopDirectoryOnly));
+                    }
+                }
                 foreach (var dut in Shared.infoModel.Test.RemoteDUTs)
                 {
                     string serialNo = dut.SerialNumber;
@@ -939,19 +1189,49 @@ namespace DuplexerFinalTest
                     };
 
                     if (!Shared.productionDatabase.SaveTestResultsWithHistory(measMainModel, manualTestModels))
+                    {
+                        Shared.logger?.Log($"Remote DUT {serialNo}: DB save failed", MessageType.Error);
+                        failedSerials.Add(serialNo);
                         allSaved = false;
-
-                    ArchiveResultFiles(Path.Combine(Shared.RemoteResultsPath, "Archive"), results, passed, isSimulationMode);
+                    }
+                    else
+                    {
+                        Shared.logger?.Log($"Remote DUT {serialNo}: DB save succeeded", MessageType.Success);
+                        // Only archive on successful save
+                        ArchiveResultFiles(Path.Combine(Shared.RemoteResultsPath, "Archive"), results, passed, isSimulationMode, archiveSessionTimestamp);
+                    }
                 }
             }
-            try
+
+            // Store failed context for potential retry
+            if (!allSaved)
             {
-                Shared.MirrorResultsToLegacy();
+                Shared.failedSaveContext = new Shared.FailedDatabaseSaveContext
+                {
+                    HasFailures = true,
+                    FailedSerials = failedSerials,
+                    TestInfo = Shared.infoModel,
+                    FilesArchived = false,
+                    FailureTime = DateTime.Now
+                };
             }
-            catch (Exception ex)
+            else
             {
-                Shared.logger?.Log($"Mirror to legacy failed: {ex.Message}", MessageType.Warning);
+                // Cleanup on full success
+                if (Shared.failedSaveContext != null)
+                    Shared.failedSaveContext.Reset();
+
+                try
+                {
+                    Shared.WriteZodiacIndexInResults();
+                    Shared.CleanResultsFoldersAfterArchiving();
+                }
+                catch (Exception ex)
+                {
+                    Shared.logger?.Log($"Post-save cleanup failed: {ex.Message}", MessageType.Warning);
+                }
             }
+
             return allSaved;
         }
 
@@ -972,6 +1252,99 @@ namespace DuplexerFinalTest
             {
                 Shared.logger?.Log($"Manual DB save failed: {ex.Message}", MessageType.Error);
                 mnuSaveToDatabase.Enabled = true;
+            }
+        }
+
+        private void MnuRetryDatabase_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (Shared.failedSaveContext?.HasFailures != true)
+                {
+                    MessageBox.Show("No failed database saves to retry.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                Shared.logger?.Log($"Retrying database write for: {string.Join(", ", Shared.failedSaveContext.FailedSerials)}", MessageType.Warning);
+                mnuRetryDatabase.Enabled = false;
+
+                // Run retry in background worker to prevent UI freezing
+                var retryContext = new RetryDatabaseSaveContext();
+                bgwPostTestSave.RunWorkerAsync(retryContext);
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.LogError("Retry database click handler", ex);
+                mnuRetryDatabase.Enabled = true;
+            }
+        }
+
+        private class RetryDatabaseSaveContext { }
+
+        private void ArchiveUnarchivedResults()
+        {
+            try
+            {
+                bool isSimulationMode = IsSimulationMode();
+                // Generate one archive session timestamp for this emergency archival
+                string archiveSessionTimestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss-fff");
+
+                // Archive Base results that weren't archived
+                if (Shared.infoModel.Test.BaseDUTs?.Count > 0)
+                {
+                    var diBase = new DirectoryInfo(Shared.BaseResultsPath);
+                    var allBaseResults = new List<FileInfo>();
+                    if (diBase.Exists)
+                    {
+                        foreach (var subdir in diBase.GetDirectories().Where(d => !string.Equals(d.Name, "Archive", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            allBaseResults.AddRange(subdir.GetFiles("*.csv", SearchOption.TopDirectoryOnly));
+                        }
+                    }
+
+                    foreach (var dut in Shared.infoModel.Test.BaseDUTs)
+                    {
+                        string serialNo = dut.SerialNumber;
+                        var results = allBaseResults.Where(a => a.Name.Contains(serialNo)).ToList();
+                        bool passed = !results.Any(r => r.Name.Contains("FAIL"));
+                        ArchiveResultFiles(Path.Combine(Shared.BaseResultsPath, "Archive"), results, passed, isSimulationMode, archiveSessionTimestamp);
+                    }
+                }
+
+                // Archive Remote results that weren't archived
+                if (Shared.infoModel.Test.RemoteDUTs?.Count > 0)
+                {
+                    var diRemote = new DirectoryInfo(Shared.RemoteResultsPath);
+                    var allRemoteResults = new List<FileInfo>();
+                    if (diRemote.Exists)
+                    {
+                        foreach (var subdir in diRemote.GetDirectories().Where(d => !string.Equals(d.Name, "Archive", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            allRemoteResults.AddRange(subdir.GetFiles("*.csv", SearchOption.TopDirectoryOnly));
+                        }
+                    }
+
+                    foreach (var dut in Shared.infoModel.Test.RemoteDUTs)
+                    {
+                        string serialNo = dut.SerialNumber;
+                        var results = allRemoteResults.Where(a => a.Name.Contains(serialNo)).ToList();
+                        bool passed = !results.Any(r => r.Name.Contains("FAIL"));
+                        ArchiveResultFiles(Path.Combine(Shared.RemoteResultsPath, "Archive"), results, passed, isSimulationMode, archiveSessionTimestamp);
+                    }
+                }
+
+                try
+                {
+                    Shared.CleanResultsFoldersAfterArchiving();
+                }
+                catch (Exception ex)
+                {
+                    Shared.logger?.Log($"Post-archive cleanup failed: {ex.Message}", MessageType.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                Shared.logger?.LogError("Archive unarchivedresults failed", ex);
             }
         }
 
@@ -1012,7 +1385,7 @@ namespace DuplexerFinalTest
                 if (Shared.infoModel.Test.BaseDUTs?.Count > 0)
                 {
                     var diBase = new DirectoryInfo(Shared.BaseResultsPath);
-                    var allBaseResults = diBase.Exists ? diBase.GetFiles().ToList() : new System.Collections.Generic.List<FileInfo>();
+                    var allBaseResults = diBase.Exists ? diBase.GetFiles("*.csv", System.IO.SearchOption.AllDirectories).ToList() : new System.Collections.Generic.List<FileInfo>();
                     foreach (var dut in Shared.infoModel.Test.BaseDUTs)
                     {
                         var results = allBaseResults.Where(file => file.Name.Contains(dut.SerialNumber)).ToList();
@@ -1032,7 +1405,7 @@ namespace DuplexerFinalTest
                 if (Shared.infoModel.Test.RemoteDUTs?.Count > 0)
                 {
                     var diRemote = new DirectoryInfo(Shared.RemoteResultsPath);
-                    var allRemoteResults = diRemote.Exists ? diRemote.GetFiles().ToList() : new System.Collections.Generic.List<FileInfo>();
+                    var allRemoteResults = diRemote.Exists ? diRemote.GetFiles("*.csv", System.IO.SearchOption.AllDirectories).ToList() : new System.Collections.Generic.List<FileInfo>();
                     foreach (var dut in Shared.infoModel.Test.RemoteDUTs)
                     {
                         var results = allRemoteResults.Where(file => file.Name.Contains(dut.SerialNumber)).ToList();
@@ -1064,10 +1437,10 @@ namespace DuplexerFinalTest
             try
             {
                 if (Directory.Exists(Shared.BaseResultsPath))
-                    overallPassed &= !Directory.GetFiles(Shared.BaseResultsPath)
+                    overallPassed &= !Directory.GetFiles(Shared.BaseResultsPath, "*.csv", System.IO.SearchOption.AllDirectories)
                         .Any(f => Path.GetFileName(f).Contains("FAIL"));
                 if (Directory.Exists(Shared.RemoteResultsPath))
-                    overallPassed &= !Directory.GetFiles(Shared.RemoteResultsPath)
+                    overallPassed &= !Directory.GetFiles(Shared.RemoteResultsPath, "*.csv", System.IO.SearchOption.AllDirectories)
                         .Any(f => Path.GetFileName(f).Contains("FAIL"));
             }
             catch { }
@@ -1139,14 +1512,36 @@ namespace DuplexerFinalTest
             return passed;
         }
 
-        private void ArchiveResultFiles(string archiveFolder, System.Collections.Generic.List<FileInfo> resultFiles, bool passed, bool isSimulationMode)
+        private void ArchiveResultFiles(string archiveFolder, System.Collections.Generic.List<FileInfo> resultFiles, bool passed, bool isSimulationMode, string archiveSessionTimestamp = null)
         {
-            Directory.CreateDirectory(archiveFolder);
+            // Generate timestamped subfolder to prevent overwrites from multiple test runs
+            if (string.IsNullOrWhiteSpace(archiveSessionTimestamp))
+                archiveSessionTimestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss-fff");
+            
+            string timestampedArchiveFolder = Path.Combine(archiveFolder, archiveSessionTimestamp);
+            Directory.CreateDirectory(timestampedArchiveFolder);
 
+            // Preserve relative folder structure when archiving (e.g. Base\<serial>\file.csv -> Archive\2026-06-09_14-30-45-123\<serial>\file.csv)
+            string baseRoot = Path.GetDirectoryName(archiveFolder) ?? archiveFolder;
             foreach (var result in resultFiles)
             {
                 string archivedFileName = BuildResultFileNameWithSpecOutcome(result.Name, passed, isSimulationMode);
-                File.Move(result.FullName, Path.Combine(archiveFolder, archivedFileName), true);
+                string relativePath = result.FullName;
+                try { relativePath = Path.GetRelativePath(baseRoot, result.FullName); } catch { relativePath = result.Name; }
+                string relativeDir = Path.GetDirectoryName(relativePath) ?? string.Empty;
+                string destDir = string.IsNullOrWhiteSpace(relativeDir) ? timestampedArchiveFolder : Path.Combine(timestampedArchiveFolder, relativeDir);
+                Directory.CreateDirectory(destDir);
+                string destPath = Path.Combine(destDir, archivedFileName);
+                try
+                {
+                    File.Copy(result.FullName, destPath, true);
+                    File.Delete(result.FullName);
+                    Shared.logger?.Log($"Archived: {archivedFileName} -> {destPath}", MessageType.Success);
+                }
+                catch (Exception ex)
+                {
+                    Shared.logger?.Log($"Archive copy failed: {result.FullName} -> {destPath} : {ex.Message}", MessageType.Warning);
+                }
             }
         }
 

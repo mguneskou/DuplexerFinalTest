@@ -103,6 +103,7 @@ namespace DuplexerFinalTest
                 Shared.infoModel.Test.BaseDUTs.AddRange(DUTs.Where(d => d.DUTType == DUTType.Base));
                 Shared.infoModel.Test.RemoteDUTs.Clear();
                 Shared.infoModel.Test.RemoteDUTs.AddRange(DUTs.Where(d => d.DUTType == DUTType.Remote));
+                Shared.TopLevelResultFileName = null;
                 if (Shared.currentRunMetrics != null)
                     Shared.currentRunMetrics.TestStartRequestedAt = DateTime.Now;
 

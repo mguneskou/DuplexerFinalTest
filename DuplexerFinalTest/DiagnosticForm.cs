@@ -3758,8 +3758,8 @@ namespace DuplexerFinalTest
             if (string.IsNullOrEmpty(gsBase))
             { LogErr("Results folder not configured in settings."); return; }
 
-            bool hasBase   = Directory.Exists(gsBase)   && Directory.GetFiles(gsBase,   "*.csv").Length > 0;
-            bool hasRemote = Directory.Exists(gsRemote) && Directory.GetFiles(gsRemote, "*.csv").Length > 0;
+            bool hasBase   = Directory.Exists(gsBase)   && Directory.GetFiles(gsBase,   "*.csv", System.IO.SearchOption.AllDirectories).Length > 0;
+            bool hasRemote = Directory.Exists(gsRemote) && Directory.GetFiles(gsRemote, "*.csv", System.IO.SearchOption.AllDirectories).Length > 0;
             if (!hasBase && !hasRemote)
             { LogErr("No gold standard results found in GoldStandards\\Base or Remote. Run the test first."); return; }
 
@@ -4006,8 +4006,8 @@ namespace DuplexerFinalTest
             {
                 // Collect new result files from GoldStandards\Base and GoldStandards\Remote
                 var newFiles = new List<string>();
-                if (Directory.Exists(newBaseFolder))   newFiles.AddRange(Directory.GetFiles(newBaseFolder,   "*.csv"));
-                if (Directory.Exists(newRemoteFolder)) newFiles.AddRange(Directory.GetFiles(newRemoteFolder, "*.csv"));
+                if (Directory.Exists(newBaseFolder))   newFiles.AddRange(Directory.GetFiles(newBaseFolder,   "*.csv", System.IO.SearchOption.AllDirectories));
+                if (Directory.Exists(newRemoteFolder)) newFiles.AddRange(Directory.GetFiles(newRemoteFolder, "*.csv", System.IO.SearchOption.AllDirectories));
 
                 // Index old files by (serial|testType), searching recursively
                 var indexOld = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

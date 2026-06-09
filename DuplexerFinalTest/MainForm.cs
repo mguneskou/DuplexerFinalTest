@@ -1399,27 +1399,45 @@ namespace DuplexerFinalTest
 
         private double ExtractThresholdCurrent(List<System.IO.FileInfo> resultFiles, string fileType, double tempMin, double tempMax)
         {
-            var resultFile = resultFiles.First(r =>
-                r.Name.Contains(fileType) &&
-                double.Parse(r.Name.Split('_').First(c => c.Contains("C")).Replace("C", string.Empty),
-                    NumberStyles.Float, CultureInfo.InvariantCulture) >= tempMin &&
-                double.Parse(r.Name.Split('_').First(c => c.Contains("C")).Replace("C", string.Empty),
-                    NumberStyles.Float, CultureInfo.InvariantCulture) <= tempMax);
-            var allLines = File.ReadAllLines(resultFile.FullName).ToList();
-            allLines.RemoveAt(0); // skip header
-            var masterPoints = new List<System.Drawing.PointF>();
-            foreach (var line in allLines)
+            try
             {
-                var cols = line.Split(',');
-                masterPoints.Add(new System.Drawing.PointF(
-                    float.Parse(cols[1], NumberStyles.Float, CultureInfo.InvariantCulture) * 1000,
-                    float.Parse(cols[6], NumberStyles.Float, CultureInfo.InvariantCulture) * 1000));
+                var resultFile = resultFiles.FirstOrDefault(r =>
+                    r.Name.Contains(fileType) &&
+                    double.TryParse(r.Name.Split('_').FirstOrDefault(c => c.Contains("C"))?.Replace("C", string.Empty),
+                        NumberStyles.Float, CultureInfo.InvariantCulture, out double t) &&
+                    t >= tempMin && t <= tempMax);
+
+                if (resultFile == null)
+                    return double.NaN;
+
+                var allLines = File.ReadAllLines(resultFile.FullName).ToList();
+                if (allLines.Count <= 1) return double.NaN; // no data lines
+                allLines.RemoveAt(0); // skip header
+                var masterPoints = new List<System.Drawing.PointF>();
+                foreach (var line in allLines)
+                {
+                    var cols = line.Split(',');
+                    if (cols.Length <= 6) continue;
+                    if (!float.TryParse(cols[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)) continue;
+                    if (!float.TryParse(cols[6], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)) continue;
+                    masterPoints.Add(new System.Drawing.PointF(x * 1000f, y * 1000f));
+                }
+
+                if (masterPoints.Count < 2) return double.NaN;
+                var smoothedData = new List<System.Drawing.PointF>();
+                for (int i = 1; i < masterPoints.Count; i++)
+                    smoothedData.Add(new System.Drawing.PointF(masterPoints[i].X, masterPoints[i].Y - masterPoints[i - 1].Y));
+
+                var result = smoothedData.Where(p => Math.Abs(p.Y / 0.002f) > 1f).ToList();
+                var positive = result.Where(p => p.Y > 0.002f).ToList();
+                if (!positive.Any()) return double.NaN;
+                return positive.First().X * 1000.0d;
             }
-            var smoothedData = new List<System.Drawing.PointF>();
-            for (int i = 1; i < masterPoints.Count; i++)
-                smoothedData.Add(new System.Drawing.PointF(masterPoints[i].X, masterPoints[i].Y - masterPoints[i - 1].Y));
-            var result = smoothedData.Where(p => Math.Abs(p.Y / 0.002) > 1).ToList();
-            return result.First(p => p.Y > 0.002).X * 1000.0d;
+            catch (Exception ex)
+            {
+                Shared.logger?.Log($"ExtractThresholdCurrent: {ex.Message}", MessageType.Warning);
+                return double.NaN;
+            }
         }
 
         #endregion
